@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15181D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<title>Notebuilt</title>
+<style>
+  /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
+  :root{
+    --ink:#15181D;        /* notebook cover / app shell */
+    --ink-2:#1C2027;      /* raised surface */
+    --ink-3:#252A33;      /* card */
+    --line:#333A45;       /* hairline rule (blueprint) */
+    --line-soft:#2A2F39;
+    --paper:#ECE6D8;      /* light text on dark */
+    --paper-dim:#A7A294;  /* secondary text */
+    --paper-faint:#6E6B61;/* tertiary */
+    --brass:#D7A94B;      /* hardware accent */
+    --brass-deep:#9A6E27;
+    --doing:#6E92B8;      /* slate blue */
+    --done:#7E9D63;       /* sage */
+    --danger:#C8654B;
+    --radius:14px;
+    --radius-sm:10px;
+    --tap:46px;
+    --safe-b:env(safe-area-inset-bottom,0px);
+    --safe-t:env(safe-area-inset-top,0px);
+    --serif:ui-serif,Georgia,"Times New Roman",serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:var(--sans);
+    font-size:16px;line-height:1.45;
+    overscroll-behavior-y:none;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,textarea,select{font-family:inherit;font-size:16px;color:var(--paper)}
+  ::placeholder{color:var(--paper-faint)}
+
+  /* ---- App frame ---- */
+  #app{
+    min-height:100%;
+    padding:calc(var(--safe-t) + 4px) 0 calc(var(--tap) + var(--safe-b) + 78px);
+    max-width:680px;margin:0 auto;
+  }
+  .topbar{
+    display:flex;align-items:center;gap:10px;
+    padding:10px 16px 12px;
+  }
+  .topbar h1{
+    font-family:var(--serif);font-weight:600;
+    font-size:25px;letter-spacing:.2px;margin:0;flex:1;
+  }
+  .topbar .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--brass);display:block;margin-bottom:1px;
+  }
+  .icon-btn{
+    width:var(--tap);height:var(--tap);border-radius:12px;
+    display:grid;place-items:center;color:var(--paper-dim);
+    background:var(--ink-2);
+  }
+  .icon-btn:active{background:var(--ink-3)}
+  .icon-btn svg{width:22px;height:22px}
+
+  .wrap{padding:0 16px}
+  .muted{color:var(--paper-dim)}
+  .faint{color:var(--paper-faint)}
+  .mono{font-family:var(--mono)}
+
+  /* ---- Cards ---- */
+  .card{
+    background:var(--ink-3);border:1px solid var(--line-soft);
+    border-radius:var(--radius);padding:14px;margin-bottom:12px;
+  }
+  .card:active{border-color:var(--line)}
+  .row{display:flex;align-items:center;gap:12px}
+  .grow{flex:1;min-width:0}
+  .truncate{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---- Section heading w/ blueprint rule ---- */
+  .sec-head{
+    display:flex;align-items:baseline;gap:10px;margin:18px 0 10px;
+  }
+  .sec-head .label{
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--paper-dim);white-space:nowrap;
+  }
+  .sec-head .rule{flex:1;height:1px;background:var(--line)}
+  .sec-head .count{font-family:var(--mono);font-size:11px;color:var(--paper-faint)}
+
+  /* ---- Status chip (the punch) ---- */
+  .chip{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;padding:4px 9px;border-radius:999px;
+    border:1px solid currentColor;white-space:nowrap;
+  }
+  .chip.todo{color:var(--paper-faint)}
+  .chip.doing{color:var(--doing)}
+  .chip.done{color:var(--done)}
+  .chip.status-active{color:var(--brass)}
+  .chip.status-quoting{color:var(--doing)}
+  .chip.status-done{color:var(--done)}
+
+  /* ---- Task row ---- */
+  .task{display:flex;align-items:flex-start;gap:12px;padding:13px 14px}
+  .punch{
+    flex:none;width:30px;height:30px;border-radius:8px;margin-top:1px;
+    border:1.5px solid var(--line);display:grid;place-items:center;
+    color:var(--paper-faint);transition:.12s;
+  }
+  .punch.doing{border-color:var(--doing);color:var(--doing)}
+  .punch.done{border-color:var(--done);color:var(--done);background:rgba(126,157,99,.14)}
+  .punch:active{transform:scale(.92)}
+  .punch svg{width:16px;height:16px}
+  .task .body{flex:1;min-width:0}
+  .task .ttext{line-height:1.35}
+  .task.is-done .ttext{color:var(--paper-faint);text-decoration:line-through}
+  .task .meta{font-family:var(--mono);font-size:11px;color:var(--paper-faint);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+  .task .meta .h-tag{color:var(--brass)}
+
+  /* ---- House card ---- */
+  .house-card{padding:0;overflow:hidden}
+  .house-cover{
+    height:118px;background:var(--ink-2);position:relative;
+    display:grid;place-items:center;color:var(--paper-faint);
+    background-size:cover;background-position:center;
+  }
+  .house-cover .blueprint{
+    position:absolute;inset:0;opacity:.5;
+    background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:22px 22px;
+  }
+  .house-cover svg{width:34px;height:34px;position:relative}
+  .house-card .hc-body{padding:12px 14px}
+  .house-card .hc-name{font-family:var(--serif);font-size:18px;font-weight:600}
+  .house-card .hc-addr{font-size:13px;color:var(--paper-dim);margin-top:1px}
+
+  /* ---- Spec stamp ---- */
+  .spec-cat{margin-bottom:6px}
+  .spec-row{
+    display:flex;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line-soft);
+    align-items:baseline;
+  }
+  .spec-row:last-child{border-bottom:none}
+  .spec-room{
+    font-family:var(--mono);font-size:11px;color:var(--paper-dim);
+    flex:none;width:74px;text-transform:uppercase;letter-spacing:.06em;
+    padding-top:1px;
+  }
+  .spec-main{flex:1;min-width:0}
+  .spec-label{font-size:14px}
+  .spec-val{font-family:var(--mono);font-size:13px;color:var(--brass);margin-top:1px;word-break:break-word}
+  .spec-note{font-size:12px;color:var(--paper-dim);margin-top:2px}
+
+  /* ---- Photo grid ---- */
+  .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .photo-grid .ph{
+    aspect-ratio:1;border-radius:8px;background:var(--ink-2);
+    background-size:cover;background-position:center;position:relative;
+  }
+  .photo-grid .ph .x{
+    position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:50%;
+    background:rgba(0,0,0,.55);display:grid;place-items:center;color:#fff;
+  }
+  .photo-grid .ph .x svg{width:14px;height:14px}
+  .photo-add{
+    aspect-ratio:1;border:1.5px dashed var(--line);border-radius:8px;
+    display:grid;place-items:center;color:var(--paper-dim);
+  }
+
+  /* ---- Inputs ---- */
+  .field{margin-bottom:12px}
+  .field label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--paper-dim);margin-bottom:5px}
+  .input,textarea.input,select.input{
+    width:100%;background:var(--ink-2);border:1px solid var(--line-soft);
+    border-radius:var(--radius-sm);padding:12px 13px;color:var(--paper);
+    outline:none;
+  }
+  .input:focus,textarea.input:focus,select.input:focus{border-color:var(--brass)}
+  textarea.input{resize:vertical;min-height:96px;line-height:1.5}
+
+  /* ---- Buttons ---- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    min-height:var(--tap);padding:0 18px;border-radius:12px;font-weight:600;
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line-soft);
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--brass);color:#231a07;border-color:var(--brass)}
+  .btn.danger{color:var(--danger);border-color:var(--danger)}
+  .btn.block{display:flex;width:100%}
+  .btn.sm{min-height:38px;padding:0 13px;font-size:14px}
+  .btn svg{width:18px;height:18px}
+
+  /* ---- FAB ---- */
+  .fab{
+    position:fixed;right:18px;z-index:30;
+    bottom:calc(var(--tap) + var(--safe-b) + 92px);
+    width:58px;height:58px;border-radius:18px;background:var(--brass);color:#231a07;
+    display:grid;place-items:center;box-shadow:0 8px 22px rgba(0,0,0,.45);
+  }
+  .fab:active{transform:translateY(1px)}
+  .fab svg{width:26px;height:26px}
+
+  /* ---- Bottom nav ---- */
+  .nav{
+    position:fixed;left:0;right:0;bottom:0;z-index:25;
+    background:rgba(20,24,29,.92);backdrop-filter:blur(12px);
+    border-top:1px solid var(--line-soft);
+    padding-bottom:var(--safe-b);
+    display:flex;
+  }
+  .nav button{
+    flex:1;min-height:var(--tap);padding:9px 0 7px;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    color:var(--paper-faint);font-size:10.5px;letter-spacing:.04em;
+  }
+  .nav button.active{color:var(--brass)}
+  .nav button svg{width:23px;height:23px}
+
+  /* ---- Sheet / modal ---- */
+  .scrim{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+  .sheet{
+    background:var(--ink-2);width:100%;max-width:680px;margin:0 auto;
+    border-radius:20px 20px 0 0;border-top:1px solid var(--line);
+    padding:8px 16px calc(18px + var(--safe-b));max-height:90vh;overflow:auto;
+    animation:rise .18s ease-out;
+  }
+  @keyframes rise{from{transform:translateY(20px);opacity:.6}to{transform:none;opacity:1}}
+  .sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:8px auto 14px}
+  .sheet h2{font-family:var(--serif);font-size:21px;margin:0 0 14px}
+
+  /* ---- Empty states ---- */
+  .empty{text-align:center;padding:46px 24px;color:var(--paper-dim)}
+  .empty svg{width:40px;height:40px;color:var(--line);margin-bottom:12px}
+  .empty .t{font-family:var(--serif);font-size:18px;color:var(--paper);margin-bottom:4px}
+
+  /* ---- Lock screen ---- */
+  #lock{
+    position:fixed;inset:0;z-index:100;background:var(--ink);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:30px;gap:6px;
+  }
+  #lock .mark{margin-bottom:10px}
+  #lock .mark svg{width:58px;height:58px}
+  #lock .name{font-family:var(--serif);font-size:24px}
+  #lock .hint{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--paper-dim);margin-bottom:18px}
+  .dots{display:flex;gap:14px;margin:8px 0 6px}
+  .dots .d{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line)}
+  .dots .d.on{background:var(--brass);border-color:var(--brass)}
+  .keypad{display:grid;grid-template-columns:repeat(3,72px);gap:14px;margin-top:14px}
+  .keypad button{
+    height:72px;border-radius:50%;background:var(--ink-2);font-family:var(--mono);
+    font-size:24px;color:var(--paper);border:1px solid var(--line-soft);
+  }
+  .keypad button:active{background:var(--ink-3)}
+  .keypad button.blank{background:none;border:none}
+  #lock .err{color:var(--danger);font-size:13px;min-height:18px;margin-top:6px}
+
+  /* ---- Toast ---- */
+  #toast{
+    position:fixed;left:50%;transform:translateX(-50%);z-index:200;
+    bottom:calc(var(--tap) + var(--safe-b) + 96px);
+    background:var(--brass);color:#231a07;font-weight:600;font-size:14px;
+    padding:11px 18px;border-radius:12px;box-shadow:0 8px 22px rgba(0,0,0,.4);
+    opacity:0;transition:.2s;pointer-events:none;max-width:84%;text-align:center;
+  }
+  #toast.show{opacity:1}
+
+  .hidden{display:none!important}
+  hr.div{border:none;border-top:1px solid var(--line-soft);margin:14px 0}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="lock" class="hidden"></div>
+<div id="app"></div>
+<button id="fab" class="fab hidden" aria-label="Add"></button>
+<nav id="nav" class="nav hidden"></nav>
+<div id="modal-root"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   Punch List — a privacy-first field notebook PWA
+   Single file. All data on-device (localStorage + IndexedDB).
+   ============================================================ */
+
+const APP_NAME = "Notebuilt";   /* <-- change here + in manifest.webmanifest + <title> to rename */
+
+/* ---------- tiny SVG icon set ---------- */
+const I = {
+  today:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9h17M8 3v3M16 3v3"/></svg>',
+  house:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9.5h12V10"/></svg>',
+  note:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9l4 4V20.5H6z"/><path d="M14.5 3.5V8h4.5M9 13h6M9 16.5h6"/></svg>',
+  gear:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.7 5.3l-1.9 1.9M7.2 16.8l-1.9 1.9M18.7 18.7l-1.9-1.9M7.2 7.2 5.3 5.3"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 6.5"/></svg>',
+  dot:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>',
+  x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>',
+  square:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v15h15"/><path d="M5 4h6M5 9h4M5 14h4"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>',
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5l5 5M4 20l1-4L16 5l4 4L9 20z"/></svg>',
+  download:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>',
+  upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9m0 0 4 4m-4-4-4 4M5 4h14"/></svg>',
+  lock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
+};
+const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" height="60" rx="15" fill="#1C2027" stroke="#333A45"/><path d="M20 16v28h28" stroke="#D7A94B" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16h11M20 25h8M20 34h8" stroke="#D7A94B" stroke-width="3" stroke-linecap="round" opacity=".55"/><circle cx="44" cy="44" r="3.4" fill="#D7A94B"/></svg>';
+
+/* ---------- storage: localStorage JSON ---------- */
+const K = { houses:'pl.houses', tasks:'pl.tasks', notes:'pl.notes', settings:'pl.settings' };
+function load(key,fallback){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
+function save(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
+let houses = load(K.houses,[]);
+let tasks  = load(K.tasks,[]);
+let notes  = load(K.notes,[]);
+let settings = load(K.settings,{ pinHash:null, pinSalt:null });
+const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
+                  notes:()=>save(K.notes,notes), settings:()=>save(K.settings,settings) };
+
+const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(36).slice(2));
+const now = ()=> Date.now();
+const todayKey = (d=new Date())=> d.toISOString().slice(0,10);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ---------- IndexedDB for photos (blobs, never uploaded) ---------- */
+let _db=null;
+function db(){
+  if(_db) return Promise.resolve(_db);
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open('punchlist',1);
+    r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains('photos')) d.createObjectStore('photos',{keyPath:'id'}); };
+    r.onsuccess=()=>{ _db=r.result; res(_db); };
+    r.onerror=()=>rej(r.error);
+  });
+}
+async function photoPut(rec){ const d=await db(); return new Promise((res,rej)=>{ const t=d.transaction('photos','readwrite'); t.objectStore('photos').put(rec); t.oncomplete=res; t.onerror=()=>rej(t.error); }); }
+async function photoGet(id){ const d=await db(); return new Promise((res,rej)=>{ const r=d.transaction('photos','readonly').objectStore('photos').get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function photoDel(id){ const d=await db(); return new Promise((res,rej)=>{ const t=d.transaction('photos','readwrite'); t.objectStore('photos').delete(id); t.oncomplete=res; t.onerror=()=>rej(t.error); }); }
+async function photoAll(){ const d=await db(); return new Promise((res,rej)=>{ const out=[]; const c=d.transaction('photos','readonly').objectStore('photos').openCursor(); c.onsuccess=e=>{const cur=e.target.result; if(cur){out.push(cur.value);cur.continue();}else res(out);}; c.onerror=()=>rej(c.error); }); }
+
+/* downscale to <=1000px longest edge, JPEG ~0.8, return Blob */
+function downscale(file){
+  return new Promise((res,rej)=>{
+    const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const max=1000; let {width:w,height:h}=img;
+      if(w>max||h>max){ const s=max/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      c.toBlob(b=>{ URL.revokeObjectURL(url); b?res(b):rej(new Error('encode failed')); },'image/jpeg',0.8);
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('bad image')); };
+    img.src=url;
+  });
+}
+const _objUrls=new Map();
+async function photoURL(id){
+  if(_objUrls.has(id)) return _objUrls.get(id);
+  const rec=await photoGet(id); if(!rec) return '';
+  const u=URL.createObjectURL(rec.blob); _objUrls.set(id,u); return u;
+}
+
+/* ---------- helpers ---------- */
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),1900); }
+const houseById = id=> houses.find(h=>h.id===id);
+function relDate(ts){
+  const d=new Date(ts), today=new Date();
+  const days=Math.round((new Date(todayKey(today))-new Date(todayKey(d)))/864e5);
+  if(days===0) return 'Today'; if(days===1) return 'Yesterday'; if(days===-1) return 'Tomorrow';
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+}
+const STATUS_NEXT={todo:'doing',doing:'done',done:'todo'};
+const STATUS_LABEL={todo:'To do',doing:'Doing',done:'Done'};
+const HOUSE_STATUS=['active','quoting','done'];
+const SPEC_CATS=['Paint','Flooring','Trim','Stain','Hardware','Measurements','Other'];
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+let view={name:'today',param:null};
+const $app=document.getElementById('app');
+const $nav=document.getElementById('nav');
+const $fab=document.getElementById('fab');
+
+function go(name,param=null){ view={name,param}; render(); window.scrollTo(0,0); }
+
+function render(){
+  const r=({today:renderToday,houses:renderHouses,house:renderHouse,notes:renderNotes,
+            note:renderNote,settings:renderSettings,search:renderSearch})[view.name]||renderToday;
+  $app.innerHTML=r(view.param);
+  bind();
+  renderNav();
+  renderFab();
+  hydratePhotos();
+}
+
+function renderNav(){
+  const items=[['today','Today',I.today],['houses','Houses',I.house],['notes','Notes',I.note],['settings','Settings',I.gear]];
+  const active=({house:'houses',note:'notes',search:'today'})[view.name]||view.name;
+  $nav.classList.remove('hidden');
+  $nav.innerHTML=items.map(([n,l,ic])=>`<button data-nav="${n}" class="${active===n?'active':''}">${ic}<span>${l}</span></button>`).join('');
+  $nav.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>go(b.dataset.nav));
+}
+function renderFab(){
+  const map={today:()=>openTaskSheet(), houses:()=>openHouseSheet(), notes:()=>go('note','new')};
+  if(map[view.name]){ $fab.classList.remove('hidden'); $fab.innerHTML=I.plus; $fab.onclick=map[view.name]; }
+  else $fab.classList.add('hidden');
+}
+
+/* ============================================================
+   TODAY
+   ============================================================ */
+function renderToday(){
+  const order={doing:0,todo:1,done:2};
+  const list=[...tasks].sort((a,b)=> (order[a.status]-order[b.status]) || (b.createdAt-a.createdAt));
+  const doing=list.filter(t=>t.status==='doing'), todo=list.filter(t=>t.status==='todo'), done=list.filter(t=>t.status==='done');
+  const d=new Date();
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(d.toLocaleDateString(undefined,{weekday:'long'}))} · ${esc(d.toLocaleDateString(undefined,{month:'long',day:'numeric'}))}</span><h1>Today</h1></div>
+    <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
+  if(!list.length) return head+`<div class="empty">${I.today}<div class="t">Nothing on the list yet</div><div>Tap + to add what you're working on. Mark it Doing when you start, Done when it's finished.</div></div>`;
+  const sec=(label,arr)=> arr.length?`<div class="sec-head"><span class="label">${label}</span><span class="rule"></span><span class="count">${arr.length}</span></div>${arr.map(taskRow).join('')}`:'';
+  return head+`<div class="wrap">${sec('In progress',doing)}${sec('To do',todo)}${sec('Done',done)}</div>`;
+}
+function taskRow(t){
+  const h=t.houseId?houseById(t.houseId):null;
+  const icon=t.status==='done'?I.check:t.status==='doing'?I.dot:'';
+  return `<div class="card task ${t.status==='done'?'is-done':''}" style="margin-bottom:8px">
+    <button class="punch ${t.status}" data-punch="${t.id}" aria-label="${STATUS_LABEL[t.status]} — tap to advance">${icon}</button>
+    <div class="body" data-edit-task="${t.id}">
+      <div class="ttext">${esc(t.text)}</div>
+      <div class="meta">${h?`<span class="h-tag">${esc(h.name)}</span>`:''}<span>${STATUS_LABEL[t.status]}</span></div>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   HOUSES
+   ============================================================ */
+function renderHouses(){
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Job sites</span><h1>Houses</h1></div>
+    <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
+  if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No houses yet</div><div>Add a house to keep its paint colors, flooring, photos and to-dos in one place.</div></div>`;
+  const cards=[...houses].sort((a,b)=>b.updatedAt-a.updatedAt).map(h=>{
+    const open=tasks.filter(t=>t.houseId===h.id&&t.status!=='done').length;
+    return `<div class="card house-card" data-house="${h.id}">
+      <div class="house-cover" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
+      <div class="hc-body"><div class="row"><div class="grow"><div class="hc-name">${esc(h.name)}</div>${h.address?`<div class="hc-addr truncate">${esc(h.address)}</div>`:''}</div>
+        <span class="chip status-${h.status}">${esc(h.status)}</span></div>
+        <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${(h.specs||[]).length} specs · ${(h.photos||[]).length} photos${open?` · ${open} open`:''}</div>
+      </div></div>`;
+  }).join('');
+  return head+`<div class="wrap">${cards}</div>`;
+}
+
+function renderHouse(id){
+  const h=houseById(id); if(!h) return renderHouses();
+  const specsByCat={};
+  (h.specs||[]).forEach(s=>{ (specsByCat[s.category]=specsByCat[s.category]||[]).push(s); });
+  const specBlocks=SPEC_CATS.filter(c=>specsByCat[c]).map(c=>`
+    <div class="sec-head"><span class="label">${c}</span><span class="rule"></span></div>
+    <div class="card spec-cat">${specsByCat[c].map(s=>`
+      <div class="spec-row">
+        ${s.room?`<div class="spec-room">${esc(s.room)}</div>`:'<div class="spec-room faint">—</div>'}
+        <div class="spec-main"><div class="spec-label">${esc(s.label)}</div>${s.value?`<div class="spec-val">${esc(s.value)}</div>`:''}${s.note?`<div class="spec-note">${esc(s.note)}</div>`:''}</div>
+        <button class="icon-btn" style="width:34px;height:34px;background:none" data-del-spec="${s.id}" aria-label="Delete spec">${I.trash}</button>
+      </div>`).join('')}</div>`).join('');
+
+  const photos=(h.photos||[]);
+  const photoGrid=`<div class="sec-head"><span class="label">Photos</span><span class="rule"></span><span class="count">${photos.length}</span></div>
+    <div class="photo-grid">
+      ${photos.map(pid=>`<div class="ph" data-photo="${pid}"><button class="x" data-del-photo="${pid}" aria-label="Remove photo">${I.x}</button></div>`).join('')}
+      <label class="photo-add">${I.camera}<input type="file" accept="image/*" capture="environment" hidden data-add-photo></label>
+    </div>`;
+
+  const houseTasks=tasks.filter(t=>t.houseId===id).sort((a,b)=>(a.status==='done')-(b.status==='done')||b.createdAt-a.createdAt);
+  const taskBlock=`<div class="sec-head"><span class="label">To-dos</span><span class="rule"></span><span class="count">${houseTasks.filter(t=>t.status!=='done').length} open</span></div>
+    ${houseTasks.length?houseTasks.map(taskRow).join(''):'<div class="card muted" style="text-align:center;padding:18px">No to-dos for this house.</div>'}
+    <button class="btn block sm" data-add-house-task style="margin-top:4px">${I.plus} Add to-do</button>`;
+
+  return `<div class="topbar">
+    <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
+    <div class="grow"><span class="eyebrow">House</span><h1 class="truncate">${esc(h.name)}</h1></div>
+    <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit house">${I.edit}</button>
+  </div>
+  <div class="wrap">
+    <div class="house-cover" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
+    <div class="row" style="margin:10px 0 2px"><span class="chip status-${h.status}">${esc(h.status)}</span>${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
+
+    ${specBlocks||''}
+    <button class="btn block sm" data-add-spec style="margin:2px 0 4px">${I.plus} Add spec (paint, flooring, trim…)</button>
+
+    ${photoGrid}
+
+    <div class="sec-head"><span class="label">Notes</span><span class="rule"></span></div>
+    <div class="card"><textarea class="input" data-house-notes placeholder="Site notes, measurements, reminders…" style="border:none;background:none;padding:0;min-height:70px">${esc(h.notes||'')}</textarea></div>
+
+    ${taskBlock}
+  </div>`;
+}
+
+/* ============================================================
+   NOTES
+   ============================================================ */
+function renderNotes(){
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Notebook</span><h1>Notes</h1></div>
+    <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
+  if(!notes.length) return head+`<div class="empty">${I.note}<div class="t">No notes yet</div><div>Keep anything that doesn't belong to a single house — ideas, supplier info, measurements.</div></div>`;
+  const cards=[...notes].sort((a,b)=>b.updatedAt-a.updatedAt).map(n=>{
+    const h=n.houseId?houseById(n.houseId):null;
+    const body=(n.body||'').replace(/\s+/g,' ').trim();
+    return `<div class="card" data-note="${n.id}">
+      <div class="row"><div class="grow"><div style="font-family:var(--serif);font-size:17px">${esc(n.title||'Untitled')}</div>
+      ${body?`<div class="muted truncate" style="font-size:13px;margin-top:2px">${esc(body)}</div>`:''}</div></div>
+      <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${relDate(n.updatedAt)}${h?` · <span style="color:var(--brass)">${esc(h.name)}</span>`:''}</div>
+    </div>`;
+  }).join('');
+  return head+`<div class="wrap">${cards}</div>`;
+}
+
+function renderNote(id){
+  const isNew=id==='new';
+  const n=isNew?{title:'',body:'',houseId:null}:notes.find(x=>x.id===id)||{title:'',body:'',houseId:null};
+  const opts=houses.map(h=>`<option value="${h.id}" ${n.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  return `<div class="topbar">
+    <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
+    <div class="grow"><span class="eyebrow">${isNew?'New note':'Note'}</span><h1>Note</h1></div>
+    <button class="btn sm primary" data-save-note="${isNew?'new':n.id}">Save</button>
+  </div>
+  <div class="wrap">
+    <div class="field"><input class="input" id="note-title" placeholder="Title" value="${esc(n.title)}" style="font-family:var(--serif);font-size:19px"></div>
+    <div class="field"><textarea class="input" id="note-body" placeholder="Write…" style="min-height:240px">${esc(n.body)}</textarea></div>
+    <div class="field"><label>Link to house</label>
+      <select class="input" id="note-house"><option value="">— none —</option>${opts}</select></div>
+    ${isNew?'':`<button class="btn danger block" data-del-note="${n.id}">${I.trash} Delete note</button>`}
+  </div>`;
+}
+
+/* ============================================================
+   SEARCH
+   ============================================================ */
+function renderSearch(){
+  return `<div class="topbar">
+    <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
+    <div class="grow"><input class="input" id="q" placeholder="Search houses, notes, to-dos…" autocomplete="off"></div>
+  </div><div class="wrap" id="results"><div class="empty faint" style="padding-top:30px">Type to search everything on this device.</div></div>`;
+}
+function runSearch(q){
+  const res=document.getElementById('results'); q=q.trim().toLowerCase();
+  if(!q){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">Type to search everything on this device.</div>`; return; }
+  const hits=[];
+  houses.forEach(h=>{ const hay=[h.name,h.address,h.notes,...(h.specs||[]).flatMap(s=>[s.label,s.value,s.room,s.note])].join(' ').toLowerCase();
+    if(hay.includes(q)) hits.push({t:'House',title:h.name,sub:h.address||'',go:()=>go('house',h.id)}); });
+  notes.forEach(n=>{ if((n.title+' '+n.body).toLowerCase().includes(q)) hits.push({t:'Note',title:n.title||'Untitled',sub:(n.body||'').slice(0,60),go:()=>go('note',n.id)}); });
+  tasks.forEach(t=>{ if((t.text||'').toLowerCase().includes(q)){ const h=houseById(t.houseId); hits.push({t:'To-do',title:t.text,sub:(h?h.name+' · ':'')+STATUS_LABEL[t.status],go:()=> h?go('house',h.id):go('today')}); } });
+  if(!hits.length){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">No matches for "${esc(q)}".</div>`; return; }
+  res.innerHTML=hits.map((x,i)=>`<div class="card" data-hit="${i}"><div class="meta mono" style="color:var(--brass);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase">${x.t}</div>
+    <div style="margin-top:3px">${esc(x.title)}</div>${x.sub?`<div class="muted truncate" style="font-size:13px">${esc(x.sub)}</div>`:''}</div>`).join('');
+  res.querySelectorAll('[data-hit]').forEach(c=>c.onclick=()=>hits[+c.dataset.hit].go());
+}
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+function renderSettings(){
+  const locked=!!settings.pinHash;
+  return `<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Settings</h1></div></div>
+  <div class="wrap">
+    <div class="sec-head"><span class="label">Security</span><span class="rule"></span></div>
+    <div class="card row"><div class="grow"><div>App lock</div><div class="muted" style="font-size:13px">${locked?'A PIN is required to open the app.':'Off — anyone with the phone can open it.'}</div></div>
+      <button class="btn sm" data-pin>${locked?'Change':'Set PIN'}</button></div>
+    ${locked?`<button class="btn danger block sm" data-pin-off style="margin-top:-4px">Turn off app lock</button>`:''}
+
+    <div class="sec-head"><span class="label">Your data</span><span class="rule"></span></div>
+    <div class="card"><div class="muted" style="font-size:13.5px;line-height:1.5">Everything lives on this device. Nothing is uploaded. Export a backup file you keep — that's your copy forever.</div></div>
+    <button class="btn block" data-export>${I.download} Export backup</button>
+    <label class="btn block" style="margin-top:10px">${I.upload} Restore from backup<input type="file" accept="application/json,.json" hidden data-import></label>
+
+    <div class="sec-head"><span class="label">About</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13px;line-height:1.6">
+      <b style="color:var(--paper)">${esc(APP_NAME)}</b> — a private field notebook.<br>
+      ${houses.length} houses · ${tasks.length} to-dos · ${notes.length} notes.<br>
+      Enlightened Global Solutions · on-device · one-time, no subscription.
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   SHEETS (add task / add house / add spec)
+   ============================================================ */
+const $mr=document.getElementById('modal-root');
+function closeSheet(){ $mr.innerHTML=''; }
+function sheet(html){
+  $mr.innerHTML=`<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
+  $mr.querySelector('[data-scrim]').addEventListener('click',e=>{ if(e.target.hasAttribute('data-scrim')) closeSheet(); });
+}
+
+function openTaskSheet(houseId=null){
+  const opts=houses.map(h=>`<option value="${h.id}" ${houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  sheet(`<h2>New to-do</h2>
+    <div class="field"><input class="input" id="t-text" placeholder="What needs doing?" autofocus></div>
+    <div class="field"><label>House (optional)</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
+    <button class="btn primary block" id="t-save">Add to today</button>`);
+  const inp=$mr.querySelector('#t-text'); setTimeout(()=>inp.focus(),50);
+  const submit=()=>{ const text=inp.value.trim(); if(!text){inp.focus();return;}
+    tasks.push({id:uid(),text,status:'todo',houseId:$mr.querySelector('#t-house').value||null,createdAt:now(),updatedAt:now(),doneAt:null,dueDate:null});
+    persist.tasks(); closeSheet(); render(); toast('Added to Today'); };
+  $mr.querySelector('#t-save').onclick=submit;
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
+}
+
+function openHouseSheet(edit=null){
+  const h=edit||{};
+  sheet(`<h2>${edit?'Edit house':'New house'}</h2>
+    <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
+    <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(h.address||'')}"></div>
+    <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+    <button class="btn primary block" id="h-save">${edit?'Save':'Create house'}</button>
+    ${edit?`<button class="btn danger block" id="h-del" style="margin-top:10px">${I.trash} Delete house</button>`:''}`);
+  setTimeout(()=>$mr.querySelector('#h-name').focus(),50);
+  $mr.querySelector('#h-save').onclick=()=>{
+    const name=$mr.querySelector('#h-name').value.trim(); if(!name){$mr.querySelector('#h-name').focus();return;}
+    const addr=$mr.querySelector('#h-addr').value.trim(), st=$mr.querySelector('#h-status').value;
+    if(edit){ edit.name=name; edit.address=addr; edit.status=st; edit.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Saved'); }
+    else{ const nh={id:uid(),name,address:addr,status:st,specs:[],photos:[],cover:null,notes:'',createdAt:now(),updatedAt:now()};
+      houses.push(nh); persist.houses(); closeSheet(); go('house',nh.id); toast('House added'); }
+  };
+  if(edit) $mr.querySelector('#h-del').onclick=()=>{
+    if(!confirm(`Delete "${edit.name}" and its specs? Photos and to-dos for it stay but unlink.`)) return;
+    (edit.photos||[]).forEach(pid=>photoDel(pid).catch(()=>{}));
+    houses=houses.filter(x=>x.id!==edit.id);
+    tasks.forEach(t=>{ if(t.houseId===edit.id) t.houseId=null; });
+    notes.forEach(nn=>{ if(nn.houseId===edit.id) nn.houseId=null; });
+    persist.houses(); persist.tasks(); persist.notes(); closeSheet(); go('houses'); toast('House deleted');
+  };
+}
+
+function openSpecSheet(houseId){
+  const h=houseById(houseId);
+  sheet(`<h2>Add spec</h2>
+    <div class="field"><label>Category</label><select class="input" id="s-cat">${SPEC_CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+    <div class="field"><label>Room / area (optional)</label><input class="input" id="s-room" placeholder="Kitchen, Trim, Whole house…"></div>
+    <div class="field"><label>What it is</label><input class="input" id="s-label" placeholder="Wall paint, Subfloor, Baseboard…" autofocus></div>
+    <div class="field"><label>Value / code</label><input class="input" id="s-val" placeholder="BM Cloud White OC-130, 5¼&quot; MDF…"></div>
+    <div class="field"><label>Note (optional)</label><input class="input" id="s-note" placeholder="2 coats, eggshell…"></div>
+    <button class="btn primary block" id="s-save">Add spec</button>`);
+  setTimeout(()=>$mr.querySelector('#s-label').focus(),50);
+  $mr.querySelector('#s-save').onclick=()=>{
+    const label=$mr.querySelector('#s-label').value.trim(); if(!label){$mr.querySelector('#s-label').focus();return;}
+    h.specs=h.specs||[];
+    h.specs.push({id:uid(),category:$mr.querySelector('#s-cat').value,room:$mr.querySelector('#s-room').value.trim(),
+      label,value:$mr.querySelector('#s-val').value.trim(),note:$mr.querySelector('#s-note').value.trim(),createdAt:now()});
+    h.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Spec added');
+  };
+}
+
+/* ============================================================
+   BIND (event wiring per view)
+   ============================================================ */
+function bind(){
+  $app.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  $app.querySelectorAll('[data-back]').forEach(b=>b.onclick=goBack);
+
+  /* Today / task rows */
+  $app.querySelectorAll('[data-punch]').forEach(b=>b.onclick=()=>{
+    const t=tasks.find(x=>x.id===b.dataset.punch); if(!t)return;
+    t.status=STATUS_NEXT[t.status]; t.updatedAt=now(); t.doneAt=t.status==='done'?now():null;
+    persist.tasks(); render();
+  });
+  $app.querySelectorAll('[data-edit-task]').forEach(b=>b.onclick=()=>openEditTask(b.dataset.editTask));
+
+  /* Houses */
+  $app.querySelectorAll('[data-house]').forEach(c=>c.onclick=()=>go('house',c.dataset.house));
+  $app.querySelectorAll('[data-edit-house]').forEach(b=>b.onclick=()=>openHouseSheet(houseById(b.dataset.editHouse)));
+  const addSpec=$app.querySelector('[data-add-spec]'); if(addSpec) addSpec.onclick=()=>openSpecSheet(view.param);
+  $app.querySelectorAll('[data-del-spec]').forEach(b=>b.onclick=()=>{
+    const h=houseById(view.param); h.specs=h.specs.filter(s=>s.id!==b.dataset.delSpec); h.updatedAt=now(); persist.houses(); render();
+  });
+  const addHT=$app.querySelector('[data-add-house-task]'); if(addHT) addHT.onclick=()=>openTaskSheet(view.param);
+  const hn=$app.querySelector('[data-house-notes]'); if(hn) hn.onblur=()=>{ const h=houseById(view.param); if(h){h.notes=hn.value;h.updatedAt=now();persist.houses();} };
+
+  /* Photos */
+  const addPhoto=$app.querySelector('[data-add-photo]'); if(addPhoto) addPhoto.onchange=e=>handlePhoto(e,view.param);
+  $app.querySelectorAll('[data-del-photo]').forEach(b=>b.onclick=async ev=>{ ev.stopPropagation();
+    const pid=b.dataset.delPhoto, h=houseById(view.param);
+    await photoDel(pid).catch(()=>{}); h.photos=(h.photos||[]).filter(x=>x!==pid);
+    if(h.cover===pid) h.cover=null; h.updatedAt=now(); persist.houses(); render();
+  });
+
+  /* Notes */
+  $app.querySelectorAll('[data-note]').forEach(c=>c.onclick=()=>go('note',c.dataset.note));
+  const saveNote=$app.querySelector('[data-save-note]'); if(saveNote) saveNote.onclick=()=>doSaveNote(saveNote.dataset.saveNote);
+  const delNote=$app.querySelector('[data-del-note]'); if(delNote) delNote.onclick=()=>{
+    if(!confirm('Delete this note?'))return; notes=notes.filter(n=>n.id!==delNote.dataset.delNote); persist.notes(); go('notes'); toast('Note deleted');
+  };
+
+  /* Search */
+  const q=$app.querySelector('#q'); if(q){ q.oninput=()=>runSearch(q.value); setTimeout(()=>q.focus(),60); }
+
+  /* Settings */
+  const pin=$app.querySelector('[data-pin]'); if(pin) pin.onclick=()=>setupPin();
+  const pinOff=$app.querySelector('[data-pin-off]'); if(pinOff) pinOff.onclick=()=>{ if(confirm('Turn off the app lock?')){ settings.pinHash=null; settings.pinSalt=null; persist.settings(); render(); toast('App lock off'); } };
+  const exp=$app.querySelector('[data-export]'); if(exp) exp.onclick=exportData;
+  const imp=$app.querySelector('[data-import]'); if(imp) imp.onchange=importData;
+}
+
+function goBack(){
+  const to = ({house:'houses', note:'notes', search:'today'})[view.name] || 'today';
+  go(to);
+}
+
+function openEditTask(id){
+  const t=tasks.find(x=>x.id===id); if(!t)return;
+  const opts=houses.map(h=>`<option value="${h.id}" ${t.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  sheet(`<h2>Edit to-do</h2>
+    <div class="field"><input class="input" id="t-text" value="${esc(t.text)}"></div>
+    <div class="field"><label>House</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
+    <div class="field"><label>Status</label><select class="input" id="t-status">${Object.keys(STATUS_LABEL).map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${STATUS_LABEL[s]}</option>`).join('')}</select></div>
+    <button class="btn primary block" id="t-save">Save</button>
+    <button class="btn danger block" id="t-del" style="margin-top:10px">${I.trash} Delete</button>`);
+  $mr.querySelector('#t-save').onclick=()=>{
+    const txt=$mr.querySelector('#t-text').value.trim(); if(!txt)return;
+    t.text=txt; t.houseId=$mr.querySelector('#t-house').value||null; t.status=$mr.querySelector('#t-status').value;
+    t.doneAt=t.status==='done'?now():null; t.updatedAt=now(); persist.tasks(); closeSheet(); render();
+  };
+  $mr.querySelector('#t-del').onclick=()=>{ tasks=tasks.filter(x=>x.id!==id); persist.tasks(); closeSheet(); render(); toast('Deleted'); };
+}
+
+function doSaveNote(id){
+  const title=$app.querySelector('#note-title').value.trim();
+  const body=$app.querySelector('#note-body').value;
+  const houseId=$app.querySelector('#note-house').value||null;
+  if(!title && !body.trim()){ go('notes'); return; }
+  if(id==='new'){ notes.push({id:uid(),title,body,houseId,createdAt:now(),updatedAt:now()}); }
+  else{ const n=notes.find(x=>x.id===id); if(n){ n.title=title; n.body=body; n.houseId=houseId; n.updatedAt=now(); } }
+  persist.notes(); go('notes'); toast('Saved');
+}
+
+async function handlePhoto(e,houseId){
+  const file=e.target.files&&e.target.files[0]; if(!file)return;
+  toast('Saving photo…');
+  try{
+    const blob=await downscale(file); const id=uid();
+    await photoPut({id,blob,houseId,createdAt:now()});
+    const h=houseById(houseId); h.photos=h.photos||[]; h.photos.push(id);
+    if(!h.cover) h.cover=id; h.updatedAt=now(); persist.houses(); render(); toast('Photo saved');
+  }catch(err){ toast('Could not read that image'); }
+}
+
+/* fill in any cover/photo backgrounds from IndexedDB after render */
+async function hydratePhotos(){
+  for(const el of $app.querySelectorAll('[data-cover]')){
+    const u=await photoURL(el.getAttribute('data-cover')); if(u){ el.style.backgroundImage=`url(${u})`; el.innerHTML=''; }
+  }
+  for(const el of $app.querySelectorAll('[data-photo]')){
+    const u=await photoURL(el.getAttribute('data-photo')); if(u) el.style.backgroundImage=`url(${u})`;
+  }
+}
+
+/* ============================================================
+   BACKUP — export / import (photos as base64)
+   ============================================================ */
+function blobToB64(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=()=>rej(r.error); r.readAsDataURL(blob); }); }
+function b64ToBlob(b64,type='image/jpeg'){ const bin=atob(b64); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return new Blob([a],{type}); }
+
+async function exportData(){
+  toast('Building backup…');
+  const photos=await photoAll();
+  const photoData={};
+  for(const p of photos){ photoData[p.id]={houseId:p.houseId,createdAt:p.createdAt,b64:await blobToB64(p.blob)}; }
+  const dump={ app:'punchlist', version:1, exportedAt:now(), houses, tasks, notes, photos:photoData };
+  const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`punchlist-backup-${todayKey()}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast('Backup downloaded');
+}
+async function importData(e){
+  const file=e.target.files&&e.target.files[0]; if(!file)return;
+  if(!confirm('Restore will REPLACE everything currently in the app with the backup. Continue?')) return;
+  try{
+    const text=await file.text(); const d=JSON.parse(text);
+    if(d.app!=='punchlist') throw new Error('Not a Punch List backup');
+    houses=d.houses||[]; tasks=d.tasks||[]; notes=d.notes||[];
+    persist.houses(); persist.tasks(); persist.notes();
+    /* photos */
+    const existing=await photoAll(); for(const p of existing) await photoDel(p.id).catch(()=>{});
+    _objUrls.clear();
+    for(const [id,p] of Object.entries(d.photos||{})){ await photoPut({id,blob:b64ToBlob(p.b64),houseId:p.houseId,createdAt:p.createdAt}); }
+    go('houses'); toast('Backup restored');
+  }catch(err){ alert('Could not restore: '+err.message); }
+}
+
+/* ============================================================
+   APP LOCK (PIN, hashed with SHA-256 + salt)
+   ============================================================ */
+async function sha(text){ const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)); return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+function randSalt(){ return [...crypto.getRandomValues(new Uint8Array(8))].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+
+const $lock=document.getElementById('lock');
+function showShell(show){ document.getElementById('app').classList.toggle('hidden',!show); $nav.classList.toggle('hidden',!show); }
+
+function lockGate(){
+  if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); return; }
+  showShell(false); $fab.classList.add('hidden');
+  let entry='', verifying=true;
+  const draw=(err='')=>{
+    $lock.classList.remove('hidden');
+    $lock.innerHTML=`<div class="mark">${MARK}</div><div class="name">${esc(APP_NAME)}</div>
+      <div class="hint">Enter PIN</div>
+      <div class="dots">${[0,1,2,3].map(i=>`<div class="d ${i<entry.length?'on':''}"></div>`).join('')}</div>
+      <div class="err">${esc(err)}</div>
+      <div class="keypad">${[1,2,3,4,5,6,7,8,9].map(n=>`<button data-k="${n}">${n}</button>`).join('')}<button class="blank"></button><button data-k="0">0</button><button data-k="del">⌫</button></div>`;
+    $lock.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
+      const k=b.dataset.k;
+      if(k==='del'){ entry=entry.slice(0,-1); draw(); return; }
+      if(entry.length>=4) return;
+      entry+=k;
+      if(entry.length===4){
+        const ok=(await sha(entry+settings.pinSalt))===settings.pinHash;
+        if(ok){ $lock.classList.add('hidden'); showShell(true); render(); }
+        else{ entry=''; draw('Wrong PIN'); }
+      } else draw();
+    });
+  };
+  draw();
+}
+
+function setupPin(){
+  let stage=1, first='', entry='';
+  const draw=(msg)=>{
+    sheet(`<h2>${settings.pinHash?'Change PIN':'Set a PIN'}</h2>
+      <div class="muted" style="text-align:center;margin-bottom:6px">${msg}</div>
+      <div class="dots" style="justify-content:center">${[0,1,2,3].map(i=>`<div class="d ${i<entry.length?'on':''}"></div>`).join('')}</div>
+      <div class="keypad" style="margin:14px auto 4px">${[1,2,3,4,5,6,7,8,9].map(n=>`<button data-k="${n}">${n}</button>`).join('')}<button class="blank"></button><button data-k="0">0</button><button data-k="del">⌫</button></div>`);
+    $mr.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
+      const k=b.dataset.k;
+      if(k==='del'){ entry=entry.slice(0,-1); draw(msg); return; }
+      if(entry.length>=4) return; entry+=k;
+      if(entry.length<4){ draw(msg); return; }
+      if(stage===1){ first=entry; entry=''; stage=2; draw('Re-enter to confirm'); }
+      else{ if(entry===first){ const salt=randSalt(); settings.pinSalt=salt; settings.pinHash=await sha(first+salt); persist.settings(); closeSheet(); render(); toast('App lock on'); }
+        else{ entry=''; stage=1; first=''; draw('Did not match — try again'); } }
+    });
+  };
+  draw('Choose a 4-digit PIN');
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('service-worker.js').catch(()=>{})); }
+lockGate();
+</script>
+</body>
+</html>
