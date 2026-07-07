@@ -324,6 +324,38 @@ const I = {
 const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" height="60" rx="15" fill="#1C2027" stroke="#333A45"/><path d="M20 16v28h28" stroke="#D7A94B" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16h11M20 25h8M20 34h8" stroke="#D7A94B" stroke-width="3" stroke-linecap="round" opacity=".55"/><circle cx="44" cy="44" r="3.4" fill="#D7A94B"/></svg>';
 
 /* ---------- storage: localStorage JSON ---------- */
+/* EGS durability guard: persist + backup + self-heal + empty-overwrite protection */
+(function(){
+  const CRIT = ['pl.houses','pl.tasks','pl.notes','pl.settings'];
+  const boot = Date.now();
+  let _set, _get;
+  try { _set = localStorage.setItem.bind(localStorage); _get = localStorage.getItem.bind(localStorage); } catch(e){ return; }
+  const blank = v => v==null || v==='' || v==='[]' || v==='{}' || v==='null' || v==='undefined';
+  /* self-heal before the app loads its data */
+  try { for (const k of CRIT){ const cur=_get(k), bak=_get(k+'_bak'); if (blank(cur) && !blank(bak)) _set(k, bak); } } catch(e){}
+  /* guarded saves */
+  try {
+    localStorage.setItem = function(key, val){
+      try {
+        if (CRIT.includes(key)){
+          const existing = _get(key);
+          if (blank(val) && !blank(existing) && (Date.now()-boot) < 8000){
+            console.warn('Durability: blocked empty overwrite of '+key+' at startup');
+            return;
+          }
+          if (!blank(val)) { try { _set(key+'_bak', val); } catch(e){} }
+        }
+      } catch(e){}
+      return _set(key, val);
+    };
+  } catch(e){}
+  /* ask the browser not to evict our data (covers IndexedDB photos too) */
+  try {
+    if (navigator.storage && navigator.storage.persist){
+      navigator.storage.persisted().then(p => { if(!p) navigator.storage.persist(); }).catch(()=>{});
+    }
+  } catch(e){}
+})();
 const K = { houses:'pl.houses', tasks:'pl.tasks', notes:'pl.notes', settings:'pl.settings' };
 function load(key,fallback){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
 function save(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
@@ -412,7 +444,7 @@ function render(){
 }
 
 function renderNav(){
-  const items=[['today','Today',I.today],['houses','Houses',I.house],['notes','Notes',I.note],['settings','Settings',I.gear]];
+  const items=[['today','Today',I.today],['houses','Projects',I.house],['notes','Notes',I.note],['settings','Settings',I.gear]];
   const active=({house:'houses',note:'notes',search:'today'})[view.name]||view.name;
   $nav.classList.remove('hidden');
   $nav.innerHTML=items.map(([n,l,ic])=>`<button data-nav="${n}" class="${active===n?'active':''}">${ic}<span>${l}</span></button>`).join('');
@@ -454,7 +486,7 @@ function taskRow(t){
    HOUSES
    ============================================================ */
 function renderHouses(){
-  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Job sites</span><h1>Houses</h1></div>
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Job sites</span><h1>Projects</h1></div>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No houses yet</div><div>Add a house to keep its paint colors, flooring, photos and to-dos in one place.</div></div>`;
   const cards=[...houses].sort((a,b)=>b.updatedAt-a.updatedAt).map(h=>{
@@ -496,8 +528,8 @@ function renderHouse(id){
 
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
-    <div class="grow"><span class="eyebrow">House</span><h1 class="truncate">${esc(h.name)}</h1></div>
-    <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit house">${I.edit}</button>
+    <div class="grow"><span class="eyebrow">Project</span><h1 class="truncate">${esc(h.name)}</h1></div>
+    <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit project">${I.edit}</button>
   </div>
   <div class="wrap">
     <div class="house-cover" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
@@ -566,7 +598,7 @@ function runSearch(q){
   if(!q){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">Type to search everything on this device.</div>`; return; }
   const hits=[];
   houses.forEach(h=>{ const hay=[h.name,h.address,h.notes,...(h.specs||[]).flatMap(s=>[s.label,s.value,s.room,s.note])].join(' ').toLowerCase();
-    if(hay.includes(q)) hits.push({t:'House',title:h.name,sub:h.address||'',go:()=>go('house',h.id)}); });
+    if(hay.includes(q)) hits.push({t:'Project',title:h.name,sub:h.address||'',go:()=>go('house',h.id)}); });
   notes.forEach(n=>{ if((n.title+' '+n.body).toLowerCase().includes(q)) hits.push({t:'Note',title:n.title||'Untitled',sub:(n.body||'').slice(0,60),go:()=>go('note',n.id)}); });
   tasks.forEach(t=>{ if((t.text||'').toLowerCase().includes(q)){ const h=houseById(t.houseId); hits.push({t:'To-do',title:t.text,sub:(h?h.name+' · ':'')+STATUS_LABEL[t.status],go:()=> h?go('house',h.id):go('today')}); } });
   if(!hits.length){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">No matches for "${esc(q)}".</div>`; return; }
@@ -615,7 +647,7 @@ function openTaskSheet(houseId=null){
   const opts=houses.map(h=>`<option value="${h.id}" ${houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   sheet(`<h2>New to-do</h2>
     <div class="field"><input class="input" id="t-text" placeholder="What needs doing?" autofocus></div>
-    <div class="field"><label>House (optional)</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
+    <div class="field"><label>Project (optional)</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
     <button class="btn primary block" id="t-save">Add to today</button>`);
   const inp=$mr.querySelector('#t-text'); setTimeout(()=>inp.focus(),50);
   const submit=()=>{ const text=inp.value.trim(); if(!text){inp.focus();return;}
@@ -627,7 +659,7 @@ function openTaskSheet(houseId=null){
 
 function openHouseSheet(edit=null){
   const h=edit||{};
-  sheet(`<h2>${edit?'Edit house':'New house'}</h2>
+  sheet(`<h2>${edit?'Edit project':'New project'}</h2>
     <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
     <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(h.address||'')}"></div>
     <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -639,7 +671,7 @@ function openHouseSheet(edit=null){
     const addr=$mr.querySelector('#h-addr').value.trim(), st=$mr.querySelector('#h-status').value;
     if(edit){ edit.name=name; edit.address=addr; edit.status=st; edit.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Saved'); }
     else{ const nh={id:uid(),name,address:addr,status:st,specs:[],photos:[],cover:null,notes:'',createdAt:now(),updatedAt:now()};
-      houses.push(nh); persist.houses(); closeSheet(); go('house',nh.id); toast('House added'); }
+      houses.push(nh); persist.houses(); closeSheet(); go('house',nh.id); toast('Project added'); }
   };
   if(edit) $mr.querySelector('#h-del').onclick=()=>{
     if(!confirm(`Delete "${edit.name}" and its specs? Photos and to-dos for it stay but unlink.`)) return;
@@ -647,7 +679,7 @@ function openHouseSheet(edit=null){
     houses=houses.filter(x=>x.id!==edit.id);
     tasks.forEach(t=>{ if(t.houseId===edit.id) t.houseId=null; });
     notes.forEach(nn=>{ if(nn.houseId===edit.id) nn.houseId=null; });
-    persist.houses(); persist.tasks(); persist.notes(); closeSheet(); go('houses'); toast('House deleted');
+    persist.houses(); persist.tasks(); persist.notes(); closeSheet(); go('houses'); toast('Project deleted');
   };
 }
 
@@ -730,7 +762,7 @@ function openEditTask(id){
   const opts=houses.map(h=>`<option value="${h.id}" ${t.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   sheet(`<h2>Edit to-do</h2>
     <div class="field"><input class="input" id="t-text" value="${esc(t.text)}"></div>
-    <div class="field"><label>House</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
+    <div class="field"><label>Project</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
     <div class="field"><label>Status</label><select class="input" id="t-status">${Object.keys(STATUS_LABEL).map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${STATUS_LABEL[s]}</option>`).join('')}</select></div>
     <button class="btn primary block" id="t-save">Save</button>
     <button class="btn danger block" id="t-del" style="margin-top:10px">${I.trash} Delete</button>`);
