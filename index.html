@@ -175,10 +175,13 @@
     background:rgba(0,0,0,.55);display:grid;place-items:center;color:#fff;
   }
   .photo-grid .ph .x svg{width:14px;height:14px}
+  /* CHUNK2_PHOTO_LIBRARY */
   .photo-add{
     aspect-ratio:1;border:1.5px dashed var(--line);border-radius:8px;
-    display:grid;place-items:center;color:var(--paper-dim);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--paper-dim);
   }
+  .photo-add svg{width:24px;height:24px}
+  .photo-add span{font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase}
 
   /* ---- Inputs ---- */
   .field{margin-bottom:12px}
@@ -314,6 +317,7 @@ const I = {
   dot:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>',
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>',
+  images:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 15.5l4.5-4.5 3 3 4-4.5 5.5 6"/><circle cx="8.5" cy="8.5" r="1.4"/></svg>',
   square:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v15h15"/><path d="M5 4h6M5 9h4M5 14h4"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>',
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5l5 5M4 20l1-4L16 5l4 4L9 20z"/></svg>',
@@ -546,7 +550,8 @@ function renderHouse(id){
   const photoGrid=`<div class="sec-head"><span class="label">Photos</span><span class="rule"></span><span class="count">${photos.length}</span></div>
     <div class="photo-grid">
       ${photos.map(pid=>`<div class="ph" data-photo="${pid}"><button class="x" data-del-photo="${pid}" aria-label="Remove photo">${I.x}</button></div>`).join('')}
-      <label class="photo-add">${I.camera}<input type="file" accept="image/*" capture="environment" hidden data-add-photo></label>
+      <label class="photo-add" aria-label="Take photo">${I.camera}<span>Camera</span><input type="file" accept="image/*" capture="environment" hidden data-add-photo></label>
+      <label class="photo-add" aria-label="Choose from library">${I.images}<span>Library</span><input type="file" accept="image/*" multiple hidden data-add-photo></label>
     </div>`;
 
   const houseTasks=tasks.filter(t=>t.houseId===id).sort((a,b)=>(a.status==='done')-(b.status==='done')||b.createdAt-a.createdAt);
@@ -767,7 +772,7 @@ function bind(){
   const hn=$app.querySelector('[data-house-notes]'); if(hn) hn.onblur=()=>{ const h=houseById(view.param); if(h){h.notes=hn.value;h.updatedAt=now();persist.houses();} };
 
   /* Photos */
-  const addPhoto=$app.querySelector('[data-add-photo]'); if(addPhoto) addPhoto.onchange=e=>handlePhoto(e,view.param);
+  $app.querySelectorAll('[data-add-photo]').forEach(el=>el.onchange=e=>handlePhoto(e,view.param));
   $app.querySelectorAll('[data-del-photo]').forEach(b=>b.onclick=async ev=>{ ev.stopPropagation();
     const pid=b.dataset.delPhoto, h=houseById(view.param);
     await photoDel(pid).catch(()=>{}); h.photos=(h.photos||[]).filter(x=>x!==pid);
@@ -824,14 +829,25 @@ function doSaveNote(id){
 }
 
 async function handlePhoto(e,houseId){
-  const file=e.target.files&&e.target.files[0]; if(!file)return;
-  toast('Saving photo…');
-  try{
-    const blob=await downscale(file); const id=uid();
-    await photoPut({id,blob,houseId,createdAt:now()});
-    const h=houseById(houseId); h.photos=h.photos||[]; h.photos.push(id);
-    if(!h.cover) h.cover=id; h.updatedAt=now(); persist.houses(); render(); toast('Photo saved');
-  }catch(err){ toast('Could not read that image'); }
+  const files=e.target.files?Array.from(e.target.files):[]; if(!files.length)return;
+  const multi=files.length>1;
+  toast(multi?`Saving ${files.length} photos…`:'Saving photo…');
+  const h=houseById(houseId); h.photos=h.photos||[];
+  let saved=0, failed=0;
+  for(const file of files){
+    try{
+      const blob=await downscale(file); const id=uid();
+      await photoPut({id,blob,houseId,createdAt:now()});
+      h.photos.push(id);
+      if(!h.cover) h.cover=id;
+      saved++;
+    }catch(err){ failed++; }
+  }
+  h.updatedAt=now(); persist.houses(); render();
+  e.target.value='';
+  if(saved && failed) toast(`${saved} saved, ${failed} could not be read`);
+  else if(failed) toast('Could not read those images');
+  else toast(multi?`${saved} photos saved`:'Photo saved');
 }
 
 /* fill in any cover/photo backgrounds from IndexedDB after render */
