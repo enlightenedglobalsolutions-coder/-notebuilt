@@ -796,7 +796,9 @@ function bind(){
   $app.querySelectorAll('[data-edit-house]').forEach(b=>b.onclick=()=>openHouseSheet(houseById(b.dataset.editHouse)));
   const sortBtn=$app.querySelector('[data-sort-houses]'); if(sortBtn) sortBtn.onclick=openSortSheet;
   const addSpec=$app.querySelector('[data-add-spec]'); if(addSpec) addSpec.onclick=()=>openSpecSheet(view.param);
+  /* CHUNK5_CONFIRM_DELETES */
   $app.querySelectorAll('[data-del-spec]').forEach(b=>b.onclick=()=>{
+    if(!confirm('Delete this spec?'))return;
     const h=houseById(view.param); h.specs=h.specs.filter(s=>s.id!==b.dataset.delSpec); h.updatedAt=now(); persist.houses(); render();
   });
   const addHT=$app.querySelector('[data-add-house-task]'); if(addHT) addHT.onclick=()=>openTaskSheet(view.param);
@@ -805,6 +807,7 @@ function bind(){
   /* Photos */
   $app.querySelectorAll('[data-add-photo]').forEach(el=>el.onchange=e=>handlePhoto(e,view.param));
   $app.querySelectorAll('[data-del-photo]').forEach(b=>b.onclick=async ev=>{ ev.stopPropagation();
+    if(!confirm('Delete this photo?'))return;
     const pid=b.dataset.delPhoto, h=houseById(view.param);
     await photoDel(pid).catch(()=>{}); h.photos=(h.photos||[]).filter(x=>x!==pid);
     if(h.cover===pid) h.cover=null; h.updatedAt=now(); persist.houses(); render();
@@ -847,7 +850,7 @@ function openEditTask(id){
     t.text=txt; t.houseId=$mr.querySelector('#t-house').value||null; t.status=$mr.querySelector('#t-status').value;
     t.doneAt=t.status==='done'?now():null; t.updatedAt=now(); persist.tasks(); closeSheet(); render();
   };
-  $mr.querySelector('#t-del').onclick=()=>{ tasks=tasks.filter(x=>x.id!==id); persist.tasks(); closeSheet(); render(); toast('Deleted'); };
+  $mr.querySelector('#t-del').onclick=()=>{ if(!confirm('Delete this to-do?'))return; tasks=tasks.filter(x=>x.id!==id); persist.tasks(); closeSheet(); render(); toast('Deleted'); };
 }
 
 function doSaveNote(id){
