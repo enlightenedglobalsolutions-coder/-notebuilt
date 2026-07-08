@@ -363,6 +363,7 @@ let houses = load(K.houses,[]);
 let tasks  = load(K.tasks,[]);
 let notes  = load(K.notes,[]);
 let settings = load(K.settings,{ pinHash:null, pinSalt:null });
+if(!settings.sortHouses) settings.sortHouses='updated';
 const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
                   notes:()=>save(K.notes,notes), settings:()=>save(K.settings,settings) };
 
@@ -421,6 +422,30 @@ function relDate(ts){
 const STATUS_NEXT={todo:'doing',doing:'done',done:'todo'};
 const STATUS_LABEL={todo:'To do',doing:'Doing',done:'Done'};
 const HOUSE_STATUS=['active','quoting','done'];
+/* CHUNK1_SORT_JOBTYPE */
+const JOB_TYPES=['paneling','flooring','trim','painting','drywall','electrical','plumbing','general'];
+const JOB_TYPE_LABEL={paneling:'Paneling',flooring:'Flooring',trim:'Trim / Finish Carpentry',painting:'Painting',drywall:'Drywall',electrical:'Electrical',plumbing:'Plumbing',general:'General / Other'};
+const SORT_OPTIONS=[
+  {id:'updated',label:'Last updated'},
+  {id:'created',label:'Date created (newest)'},
+  {id:'alpha',label:'Alphabetical (A\u2013Z)'},
+  {id:'status',label:'Status'},
+  {id:'jobtype',label:'Job type'},
+  {id:'open',label:'Open to-dos (most first)'}
+];
+function sortHousesList(list){
+  const mode=settings.sortHouses||'updated';
+  const statusOrder={active:0,quoting:1,done:2};
+  const openCount=h=>tasks.filter(t=>t.houseId===h.id&&t.status!=='done').length;
+  const arr=[...list];
+  if(mode==='created') arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  else if(mode==='alpha') arr.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  else if(mode==='status') arr.sort((a,b)=>(statusOrder[a.status]??9)-(statusOrder[b.status]??9)||(b.updatedAt-a.updatedAt));
+  else if(mode==='jobtype') arr.sort((a,b)=>(JOB_TYPE_LABEL[a.jobType]||'').localeCompare(JOB_TYPE_LABEL[b.jobType]||'')||(b.updatedAt-a.updatedAt));
+  else if(mode==='open') arr.sort((a,b)=>openCount(b)-openCount(a)||(b.updatedAt-a.updatedAt));
+  else arr.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  return arr;
+}
 const SPEC_CATS=['Paint','Flooring','Trim','Stain','Hardware','Measurements','Other'];
 
 /* ============================================================
@@ -486,16 +511,19 @@ function taskRow(t){
    HOUSES
    ============================================================ */
 function renderHouses(){
+  const sortLabel=(SORT_OPTIONS.find(o=>o.id===(settings.sortHouses||'updated'))||SORT_OPTIONS[0]).label;
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Job sites</span><h1>Projects</h1></div>
+    <button class="icon-btn" data-sort-houses aria-label="Sort projects: ${esc(sortLabel)}">${I.square}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No houses yet</div><div>Add a house to keep its paint colors, flooring, photos and to-dos in one place.</div></div>`;
-  const cards=[...houses].sort((a,b)=>b.updatedAt-a.updatedAt).map(h=>{
+  const cards=sortHousesList(houses).map(h=>{
     const open=tasks.filter(t=>t.houseId===h.id&&t.status!=='done').length;
+    const jt=h.jobType&&JOB_TYPE_LABEL[h.jobType]?JOB_TYPE_LABEL[h.jobType]:'';
     return `<div class="card house-card" data-house="${h.id}">
       <div class="house-cover" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
       <div class="hc-body"><div class="row"><div class="grow"><div class="hc-name">${esc(h.name)}</div>${h.address?`<div class="hc-addr truncate">${esc(h.address)}</div>`:''}</div>
         <span class="chip status-${h.status}">${esc(h.status)}</span></div>
-        <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${(h.specs||[]).length} specs · ${(h.photos||[]).length} photos${open?` · ${open} open`:''}</div>
+        <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${jt?`${esc(jt)} · `:''}${(h.specs||[]).length} specs · ${(h.photos||[]).length} photos${open?` · ${open} open`:''}</div>
       </div></div>`;
   }).join('');
   return head+`<div class="wrap">${cards}</div>`;
@@ -533,7 +561,7 @@ function renderHouse(id){
   </div>
   <div class="wrap">
     <div class="house-cover" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
-    <div class="row" style="margin:10px 0 2px"><span class="chip status-${h.status}">${esc(h.status)}</span>${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
+    <div class="row" style="margin:10px 0 2px"><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
 
     ${specBlocks||''}
     <button class="btn block sm" data-add-spec style="margin:2px 0 4px">${I.plus} Add spec (paint, flooring, trim…)</button>
@@ -657,20 +685,30 @@ function openTaskSheet(houseId=null){
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
 }
 
+function openSortSheet(){
+  const cur=settings.sortHouses||'updated';
+  sheet(`<h2>Sort projects</h2>
+    ${SORT_OPTIONS.map(o=>`<button class="btn block" data-sort-opt="${o.id}" style="justify-content:space-between;margin-bottom:8px">${esc(o.label)}${o.id===cur?I.check:''}</button>`).join('')}`);
+  $mr.querySelectorAll('[data-sort-opt]').forEach(b=>b.onclick=()=>{
+    settings.sortHouses=b.dataset.sortOpt; persist.settings(); closeSheet(); render(); toast('Sorted: '+(SORT_OPTIONS.find(o=>o.id===b.dataset.sortOpt)||{}).label);
+  });
+}
+
 function openHouseSheet(edit=null){
   const h=edit||{};
   sheet(`<h2>${edit?'Edit project':'New project'}</h2>
     <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
     <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(h.address||'')}"></div>
     <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="field"><label>Job type</label><select class="input" id="h-jobtype">${JOB_TYPES.map(j=>`<option value="${j}" ${h.jobType===j?'selected':''}>${JOB_TYPE_LABEL[j]}</option>`).join('')}</select></div>
     <button class="btn primary block" id="h-save">${edit?'Save':'Create house'}</button>
     ${edit?`<button class="btn danger block" id="h-del" style="margin-top:10px">${I.trash} Delete house</button>`:''}`);
   setTimeout(()=>$mr.querySelector('#h-name').focus(),50);
   $mr.querySelector('#h-save').onclick=()=>{
     const name=$mr.querySelector('#h-name').value.trim(); if(!name){$mr.querySelector('#h-name').focus();return;}
-    const addr=$mr.querySelector('#h-addr').value.trim(), st=$mr.querySelector('#h-status').value;
-    if(edit){ edit.name=name; edit.address=addr; edit.status=st; edit.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Saved'); }
-    else{ const nh={id:uid(),name,address:addr,status:st,specs:[],photos:[],cover:null,notes:'',createdAt:now(),updatedAt:now()};
+    const addr=$mr.querySelector('#h-addr').value.trim(), st=$mr.querySelector('#h-status').value, jt=$mr.querySelector('#h-jobtype').value;
+    if(edit){ edit.name=name; edit.address=addr; edit.status=st; edit.jobType=jt; edit.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Saved'); }
+    else{ const nh={id:uid(),name,address:addr,status:st,jobType:jt,specs:[],photos:[],cover:null,notes:'',createdAt:now(),updatedAt:now()};
       houses.push(nh); persist.houses(); closeSheet(); go('house',nh.id); toast('Project added'); }
   };
   if(edit) $mr.querySelector('#h-del').onclick=()=>{
@@ -720,6 +758,7 @@ function bind(){
   /* Houses */
   $app.querySelectorAll('[data-house]').forEach(c=>c.onclick=()=>go('house',c.dataset.house));
   $app.querySelectorAll('[data-edit-house]').forEach(b=>b.onclick=()=>openHouseSheet(houseById(b.dataset.editHouse)));
+  const sortBtn=$app.querySelector('[data-sort-houses]'); if(sortBtn) sortBtn.onclick=openSortSheet;
   const addSpec=$app.querySelector('[data-add-spec]'); if(addSpec) addSpec.onclick=()=>openSpecSheet(view.param);
   $app.querySelectorAll('[data-del-spec]').forEach(b=>b.onclick=()=>{
     const h=houseById(view.param); h.specs=h.specs.filter(s=>s.id!==b.dataset.delSpec); h.updatedAt=now(); persist.houses(); render();
