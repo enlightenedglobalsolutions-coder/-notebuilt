@@ -1344,45 +1344,66 @@ function bindAnnotateGestures(canvas,stage,ctx){
 function placeAnnotateNote(clientX,clientY,canvasPt,canvas,stage,ctx){
   const pending=anPending; if(!pending)return;
   const box=pending.box, color=an.color;
-  const cx=(box.x0+box.x1)/2, cy=(box.y0+box.y1)/2;
-  const halfSpan=Math.max(box.x1-box.x0,box.y1-box.y0)/2;
-  const dx=cx-canvasPt.x, dy=cy-canvasPt.y;
-  const dist=Math.hypot(dx,dy)||1;
-  const reach=Math.min(halfSpan*0.95, dist*0.9);
-  const t=Math.max(0,(dist-reach)/dist);
-  const tipX=canvasPt.x+dx*t, tipY=canvasPt.y+dy*t;
-  const angle=Math.atan2(tipY-canvasPt.y,tipX-canvasPt.x);
-  const lineWd=Math.max(3,canvas.width*0.005);
-  ctx.save();
-  ctx.strokeStyle='rgba(0,0,0,.55)'; ctx.lineWidth=lineWd+3; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(canvasPt.x,canvasPt.y); ctx.lineTo(tipX,tipY); ctx.stroke();
-  ctx.strokeStyle=color; ctx.lineWidth=lineWd;
-  ctx.beginPath(); ctx.moveTo(canvasPt.x,canvasPt.y); ctx.lineTo(tipX,tipY); ctx.stroke();
-  ctx.restore();
-  drawArrowhead(ctx,tipX,tipY,angle,color,Math.max(10,canvas.width*0.016));
 
+  /* CHUNK9_NOTE_EDGE_CLAMP — the arrow is now drawn at commit time, once we
+     know the note text and can keep it fully inside the photo. */
   const existing=stage.querySelector('.a-textinput'); if(existing) existing.remove();
   const r=stage.getBoundingClientRect();
   const dispScale=canvas.getBoundingClientRect().width/canvas.width;
   const fontCanvasPx=Math.max(26,canvas.width*0.04);
+
   const inp=document.createElement('input');
   inp.type='text'; inp.className='a-textinput';
   inp.placeholder='Note\u2026';
-  inp.style.cssText='position:absolute;left:'+(clientX-r.left)+'px;top:'+(clientY-r.top)+'px;transform:translateY(-50%);'+
-    'background:rgba(0,0,0,.55);border:1px dashed '+color+';color:'+color+';'+
-    'font-size:'+Math.round(fontCanvasPx*dispScale)+'px;padding:3px 7px;border-radius:4px;min-width:100px;outline:none;';
+  const inputW=Math.min(220,Math.round(r.width*0.7));
+  let leftPx=clientX-r.left;
+  if(leftPx+inputW>r.width-8) leftPx=Math.max(8,r.width-8-inputW);
+  const topPx=clientY-r.top;
+  inp.style.cssText='position:absolute;left:'+leftPx+'px;top:'+topPx+'px;transform:translateY(-50%);'+
+    'width:'+inputW+'px;background:rgba(0,0,0,.55);border:1px dashed '+color+';color:'+color+';'+
+    'font-size:'+Math.round(fontCanvasPx*dispScale)+'px;padding:3px 7px;border-radius:4px;outline:none;';
   stage.appendChild(inp); inp.focus();
+
   let done=false;
   const commit=()=>{
     if(done)return; done=true;
     const val=inp.value.trim(); inp.remove();
-    if(val){
-      ctx.font='700 '+fontCanvasPx+'px system-ui,-apple-system,sans-serif';
-      ctx.textBaseline='middle';
-      ctx.lineWidth=Math.max(3,fontCanvasPx*0.12); ctx.strokeStyle='rgba(0,0,0,.6)';
-      ctx.strokeText(val,canvasPt.x,canvasPt.y);
-      ctx.fillStyle=color; ctx.fillText(val,canvasPt.x,canvasPt.y);
-    }
+    if(!val){ anPending=null; updateAnnotateHint(); return; }
+
+    ctx.font='700 '+fontCanvasPx+'px system-ui,-apple-system,sans-serif';
+    ctx.textBaseline='middle'; ctx.textAlign='left';
+    const textW=ctx.measureText(val).width;
+    const margin=Math.max(10,canvas.width*0.012);
+    let tx=canvasPt.x, ty=canvasPt.y;
+    if(tx+textW+margin>canvas.width) tx=canvas.width-textW-margin;
+    if(tx<margin) tx=margin;
+    const halfH=fontCanvasPx*0.6;
+    if(ty-halfH<margin) ty=margin+halfH;
+    if(ty+halfH>canvas.height-margin) ty=canvas.height-halfH-margin;
+
+    const cx=(box.x0+box.x1)/2, cy=(box.y0+box.y1)/2;
+    const halfSpan=Math.max(box.x1-box.x0,box.y1-box.y0)/2;
+    const dx=cx-tx, dy=cy-ty;
+    const dist=Math.hypot(dx,dy)||1;
+    const reach=Math.min(halfSpan*0.95, dist*0.9);
+    const t=Math.max(0,(dist-reach)/dist);
+    const tipX=tx+dx*t, tipY=ty+dy*t;
+    const angle=Math.atan2(tipY-ty,tipX-tx);
+    const lineWd=Math.max(3,canvas.width*0.005);
+    ctx.save();
+    ctx.strokeStyle='rgba(0,0,0,.55)'; ctx.lineWidth=lineWd+3; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tipX,tipY); ctx.stroke();
+    ctx.strokeStyle=color; ctx.lineWidth=lineWd;
+    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tipX,tipY); ctx.stroke();
+    ctx.restore();
+    drawArrowhead(ctx,tipX,tipY,angle,color,Math.max(10,canvas.width*0.016));
+
+    ctx.font='700 '+fontCanvasPx+'px system-ui,-apple-system,sans-serif';
+    ctx.textBaseline='middle'; ctx.textAlign='left';
+    ctx.lineWidth=Math.max(3,fontCanvasPx*0.12); ctx.strokeStyle='rgba(0,0,0,.6)';
+    ctx.strokeText(val,tx,ty);
+    ctx.fillStyle=color; ctx.fillText(val,tx,ty);
+
     anPending=null;
     updateAnnotateHint();
   };
