@@ -375,6 +375,8 @@ const I = {
   today:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9h17M8 3v3M16 3v3"/></svg>',
   house:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9.5h12V10"/></svg>',
   note:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9l4 4V20.5H6z"/><path d="M14.5 3.5V8h4.5M9 13h6M9 16.5h6"/></svg>',
+  /* CHUNK11_IMPORTANT_NOTES */
+  star:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l2.9 6.6L22 9.3l-5 4.9 1.2 7L12 17.9 5.8 21.2 7 14.2 2 9.3l7.1-.7L12 2z"/></svg>',
   gear:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.7 5.3l-1.9 1.9M7.2 16.8l-1.9 1.9M18.7 18.7l-1.9-1.9M7.2 7.2 5.3 5.3"/></svg>',
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -438,6 +440,7 @@ function save(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
 let houses = load(K.houses,[]);
 let tasks  = load(K.tasks,[]);
 let notes  = load(K.notes,[]);
+let pendingNoteHouseId=null;
 let settings = load(K.settings,{ pinHash:null, pinSalt:null });
 if(!settings.sortHouses) settings.sortHouses='updated';
 const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
@@ -632,6 +635,11 @@ function renderHouse(id){
     ${houseTasks.length?houseTasks.map(taskRow).join(''):'<div class="card muted" style="text-align:center;padding:18px">No to-dos for this house.</div>'}
     <button class="btn block sm" data-add-house-task style="margin-top:4px">${I.plus} Add to-do</button>`;
 
+  const houseNotes=notes.filter(n=>n.houseId===id).sort((a,b)=>(b.important-a.important)||(b.updatedAt-a.updatedAt));
+  const notebookBlock=`<div class="sec-head"><span class="label">Notebook</span><span class="rule"></span><span class="count">${houseNotes.length}</span></div>
+    ${houseNotes.length?houseNotes.map(noteCardHtml).join(''):'<div class="card muted" style="text-align:center;padding:18px">No notes for this project yet.</div>'}
+    <button class="btn block sm" data-add-note-house="${h.id}" style="margin-top:4px">${I.plus} Add note</button>`;
+
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
     <div class="grow"><span class="eyebrow">Project</span><h1 class="truncate">${esc(h.name)}</h1></div>
@@ -647,8 +655,10 @@ function renderHouse(id){
 
     ${photoGrid}
 
-    <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Notes</span><span class="rule"></span>${I.chevronR}</div>
+    <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Site Notes</span><span class="rule"></span>${I.chevronR}</div>
     <div class="card" data-open-house-notes="${h.id}" style="cursor:pointer">${h.notes?`<div style="white-space:pre-wrap;color:var(--paper-dim);font-size:14px;max-height:3.6em;overflow:hidden">${esc(h.notes.slice(0,180))}${h.notes.length>180?'…':''}</div>`:`<div class="muted" style="font-size:14px">Tap to add site notes, measurements, reminders…</div>`}</div>
+
+    ${notebookBlock}
 
     ${taskBlock}
   </div>`;
@@ -671,25 +681,31 @@ function renderHouseNotes(houseId){
 /* ============================================================
    NOTES
    ============================================================ */
+function noteCardHtml(n){
+  const h=n.houseId?houseById(n.houseId):null;
+  const body=(n.body||'').replace(/\s+/g,' ').trim();
+  return `<div class="card" data-note="${n.id}">
+    <div class="row"><div class="grow"><div style="font-family:var(--serif);font-size:17px">${n.important?`<span style="color:var(--brass)">${I.star}</span> `:''}${esc(n.title||'Untitled')}</div>
+    ${body?`<div class="muted truncate" style="font-size:13px;margin-top:2px">${esc(body)}</div>`:''}</div></div>
+    <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${relDate(n.updatedAt)}${h?` · <span style="color:var(--brass)">${esc(h.name)}</span>`:''}</div>
+  </div>`;
+}
+
 function renderNotes(){
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Notebook</span><h1>Notes</h1></div>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!notes.length) return head+`<div class="empty">${I.note}<div class="t">No notes yet</div><div>Keep anything that doesn't belong to a single house — ideas, supplier info, measurements.</div></div>`;
-  const cards=[...notes].sort((a,b)=>b.updatedAt-a.updatedAt).map(n=>{
-    const h=n.houseId?houseById(n.houseId):null;
-    const body=(n.body||'').replace(/\s+/g,' ').trim();
-    return `<div class="card" data-note="${n.id}">
-      <div class="row"><div class="grow"><div style="font-family:var(--serif);font-size:17px">${esc(n.title||'Untitled')}</div>
-      ${body?`<div class="muted truncate" style="font-size:13px;margin-top:2px">${esc(body)}</div>`:''}</div></div>
-      <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${relDate(n.updatedAt)}${h?` · <span style="color:var(--brass)">${esc(h.name)}</span>`:''}</div>
-    </div>`;
-  }).join('');
-  return head+`<div class="wrap">${cards}</div>`;
+  const sorted=[...notes].sort((a,b)=>b.updatedAt-a.updatedAt);
+  const important=sorted.filter(n=>n.important);
+  const rest=sorted.filter(n=>!n.important);
+  const impBlock=important.length?`<div class="sec-head"><span class="label" style="color:var(--brass)">Important</span><span class="rule"></span><span class="count">${important.length}</span></div>${important.map(noteCardHtml).join('')}`:'';
+  return head+`<div class="wrap">${impBlock}${rest.map(noteCardHtml).join('')}</div>`;
 }
 
 function renderNote(id){
   const isNew=id==='new';
-  const n=isNew?{title:'',body:'',houseId:null}:notes.find(x=>x.id===id)||{title:'',body:'',houseId:null};
+  const presetHouseId=pendingNoteHouseId; pendingNoteHouseId=null;
+  const n=isNew?{title:'',body:'',houseId:presetHouseId,important:false}:notes.find(x=>x.id===id)||{title:'',body:'',houseId:null,important:false};
   const opts=houses.map(h=>`<option value="${h.id}" ${n.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
@@ -698,7 +714,8 @@ function renderNote(id){
   </div>
   <div class="wrap">
     <div class="field"><input class="input" id="note-title" placeholder="Title" value="${esc(n.title)}" style="font-family:var(--serif);font-size:19px"></div>
-    <div class="field"><textarea class="input" id="note-body" placeholder="Write…" style="min-height:240px">${esc(n.body)}</textarea></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;font-size:12.5px;color:var(--brass)"><input type="checkbox" id="note-important" ${n.important?'checked':''} style="width:22px;height:22px;accent-color:var(--brass)"> Mark as Important</label></div>
+    <div class="field"><textarea class="input" id="note-body" placeholder="Write…" style="min-height:220px">${esc(n.body)}</textarea></div>
     <div class="field"><label>Link to house</label>
       <select class="input" id="note-house"><option value="">— none —</option>${opts}</select></div>
     ${isNew?'':`<button class="btn danger block" data-del-note="${n.id}">${I.trash} Delete note</button>`}
@@ -919,6 +936,7 @@ function bind(){
     const h=houseById(view.param); h.specs=h.specs.filter(s=>s.id!==b.dataset.delSpec); h.updatedAt=now(); persist.houses(); render();
   });
   const addHT=$app.querySelector('[data-add-house-task]'); if(addHT) addHT.onclick=()=>openTaskSheet(view.param);
+  const addNoteH=$app.querySelector('[data-add-note-house]'); if(addNoteH) addNoteH.onclick=()=>{ pendingNoteHouseId=addNoteH.dataset.addNoteHouse; go('note','new'); };
   $app.querySelectorAll('[data-open-house-notes]').forEach(el=>el.onclick=()=>go('housenotes',el.dataset.openHouseNotes));
   const hnFull=$app.querySelector('[data-house-notes-full]');
   if(hnFull){
@@ -983,9 +1001,10 @@ function doSaveNote(id){
   const title=$app.querySelector('#note-title').value.trim();
   const body=$app.querySelector('#note-body').value;
   const houseId=$app.querySelector('#note-house').value||null;
+  const important=$app.querySelector('#note-important').checked;
   if(!title && !body.trim()){ go('notes'); return; }
-  if(id==='new'){ notes.push({id:uid(),title,body,houseId,createdAt:now(),updatedAt:now()}); }
-  else{ const n=notes.find(x=>x.id===id); if(n){ n.title=title; n.body=body; n.houseId=houseId; n.updatedAt=now(); } }
+  if(id==='new'){ notes.push({id:uid(),title,body,houseId,important,createdAt:now(),updatedAt:now()}); }
+  else{ const n=notes.find(x=>x.id===id); if(n){ n.title=title; n.body=body; n.houseId=houseId; n.important=important; n.updatedAt=now(); } }
   persist.notes(); go('notes'); toast('Saved');
 }
 
