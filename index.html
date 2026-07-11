@@ -389,6 +389,8 @@ const I = {
   rotate:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>',
   undo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.34-5.66"/><path d="M4 4v5h5"/></svg>',
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5l5 5M4 20l1-4L16 5l4 4L9 20z"/></svg>',
+  /* CHUNK8_SHARE_PROJECT */
+  share:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M12 4l-4 4M12 4l4 4"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
   download:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>',
   upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9m0 0 4 4m-4-4-4 4M5 4h14"/></svg>',
   lock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
@@ -630,6 +632,7 @@ function renderHouse(id){
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
     <div class="grow"><span class="eyebrow">Project</span><h1 class="truncate">${esc(h.name)}</h1></div>
+    <button class="icon-btn" data-share-house="${h.id}" aria-label="Share project">${I.share}</button>
     <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit project">${I.edit}</button>
   </div>
   <div class="wrap">
@@ -767,6 +770,65 @@ function openSortSheet(){
   });
 }
 
+function openShareSheet(houseId){
+  const h=houseById(houseId); if(!h)return;
+  sheet(`<h2>Share "${esc(h.name)}"</h2>
+    <div class="muted" style="font-size:13px;margin-bottom:14px">Creates a file another Notebuilt user can import as a new project. Specs and the project name are always included.</div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-addr" style="width:20px;height:20px;accent-color:var(--brass)"> Address</label></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-notes" checked style="width:20px;height:20px;accent-color:var(--brass)"> Site notes</label></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-photos" style="width:20px;height:20px;accent-color:var(--brass)"> Photos (${(h.photos||[]).length})</label></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-tasks" style="width:20px;height:20px;accent-color:var(--brass)"> To-dos</label></div>
+    <button class="btn primary block" id="sh-go">${I.share} Share project</button>`);
+  $mr.querySelector('#sh-go').onclick=()=>doShareHouse(houseId,{
+    address:$mr.querySelector('#sh-addr').checked,
+    notes:$mr.querySelector('#sh-notes').checked,
+    photos:$mr.querySelector('#sh-photos').checked,
+    tasks:$mr.querySelector('#sh-tasks').checked
+  });
+}
+
+async function doShareHouse(houseId,opts){
+  const h=houseById(houseId); if(!h)return;
+  closeSheet();
+  toast('Preparing share…');
+  try{
+    const project={
+      name:h.name, status:h.status, jobType:h.jobType||'',
+      specs:(h.specs||[]).map(s=>({category:s.category,room:s.room,label:s.label,value:s.value,note:s.note}))
+    };
+    if(opts.address) project.address=h.address||'';
+    if(opts.notes) project.notes=h.notes||'';
+    if(opts.tasks){
+      project.tasks=tasks.filter(t=>t.houseId===houseId).map(t=>({text:t.text,status:t.status}));
+    }
+    if(opts.photos && (h.photos||[]).length){
+      const photoData={};
+      for(const pid of h.photos){
+        const rec=await photoGet(pid);
+        if(rec) photoData[pid]={b64:await blobToB64(rec.blob)};
+      }
+      project.photos=photoData;
+    }
+    const dump={ app:'notebuilt-project-share', version:1, exportedAt:now(), project };
+    const json=JSON.stringify(dump);
+    const filename='notebuilt-'+(h.name||'project').toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)+'-'+todayKey()+'.json';
+    const file=new File([json],filename,{type:'application/json'});
+    if(navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:'Notebuilt project: '+h.name});
+      toast('Shared');
+    }else{
+      const blob=new Blob([json],{type:'application/json'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+      a.download=filename; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+      toast('Downloaded');
+    }
+  }catch(err){
+    if(err && err.name==='AbortError'){ toast('Share cancelled'); return; }
+    toast('Could not share project');
+  }
+}
+
 function openHouseSheet(edit=null){
   const h=edit||{};
   sheet(`<h2>${edit?'Edit project':'New project'}</h2>
@@ -831,6 +893,7 @@ function bind(){
   /* Houses */
   $app.querySelectorAll('[data-house]').forEach(c=>c.onclick=()=>go('house',c.dataset.house));
   $app.querySelectorAll('[data-edit-house]').forEach(b=>b.onclick=()=>openHouseSheet(houseById(b.dataset.editHouse)));
+  $app.querySelectorAll('[data-share-house]').forEach(b=>b.onclick=()=>openShareSheet(b.dataset.shareHouse));
   const sortBtn=$app.querySelector('[data-sort-houses]'); if(sortBtn) sortBtn.onclick=openSortSheet;
   const addSpec=$app.querySelector('[data-add-spec]'); if(addSpec) addSpec.onclick=()=>openSpecSheet(view.param);
   /* CHUNK5_CONFIRM_DELETES */
