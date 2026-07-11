@@ -251,6 +251,9 @@
   /* CHUNK12_STAR_OUTLINE */
   .note-star{display:inline-flex;flex:none;vertical-align:-2px}
   .note-star svg{width:15px;height:15px;display:block}
+  /* CHUNK15_CHEVRON_SIZE */
+  .chev{display:inline-flex;flex:none;color:var(--paper-faint)}
+  .chev svg{width:18px;height:18px;display:block}
   .empty .t{font-family:var(--serif);font-size:18px;color:var(--paper);margin-bottom:4px}
 
   /* ---- Lock screen ---- */
@@ -658,7 +661,7 @@ function renderHouse(id){
 
     ${photoGrid}
 
-    <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Site Notes</span><span class="rule"></span>${I.chevronR}</div>
+    <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Site Notes</span><span class="rule"></span><span class="chev">${I.chevronR}</span></div>
     <div class="card" data-open-house-notes="${h.id}" style="cursor:pointer">${h.notes?`<div style="white-space:pre-wrap;color:var(--paper-dim);font-size:14px;max-height:3.6em;overflow:hidden">${esc(h.notes.slice(0,180))}${h.notes.length>180?'…':''}</div>`:`<div class="muted" style="font-size:14px">Tap to add site notes, measurements, reminders…</div>`}</div>
 
     ${notebookBlock}
@@ -766,7 +769,7 @@ function renderSettings(){
     <label class="btn block" style="margin-top:10px">${I.upload} Restore from backup<input type="file" accept="application/json,.json" hidden data-import></label>
 
     <div class="sec-head"><span class="label">Privacy</span><span class="rule"></span></div>
-    <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What we collect, where your data lives, how we make money.</div></div>${I.chevronR}</div>
+    <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What we collect, where your data lives, how we make money.</div></div><span class="chev">${I.chevronR}</span></div>
 
     <div class="sec-head"><span class="label">About</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13px;line-height:1.6">
