@@ -1489,10 +1489,11 @@ async function exportData(){
   const photos=await photoAll();
   const photoData={};
   for(const p of photos){ photoData[p.id]={houseId:p.houseId,createdAt:p.createdAt,b64:await blobToB64(p.blob)}; }
-  const dump={ app:'punchlist', version:1, exportedAt:now(), houses, tasks, notes, photos:photoData };
+  /* CHUNK13_RENAME_BACKUP */
+  const dump={ app:'notebuilt', version:1, exportedAt:now(), houses, tasks, notes, photos:photoData };
   const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download=`punchlist-backup-${todayKey()}.json`; a.click();
+  a.download=`notebuilt-backup-${todayKey()}.json`; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast('Backup downloaded');
 }
 async function importData(e){
@@ -1500,7 +1501,7 @@ async function importData(e){
   if(!confirm('Restore will REPLACE everything currently in the app with the backup. Continue?')) return;
   try{
     const text=await file.text(); const d=JSON.parse(text);
-    if(d.app!=='punchlist') throw new Error('Not a Punch List backup');
+    if(d.app!=='notebuilt' && d.app!=='punchlist') throw new Error('Not a Notebuilt backup');
     houses=d.houses||[]; tasks=d.tasks||[]; notes=d.notes||[];
     persist.houses(); persist.tasks(); persist.notes();
     /* photos */
