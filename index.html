@@ -379,6 +379,8 @@ const I = {
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  /* CHUNK10_FULLSCREEN_NOTES */
+  chevronR:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
   check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 6.5"/></svg>',
   dot:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>',
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
@@ -534,7 +536,8 @@ function go(name,param=null){ view={name,param}; render(); window.scrollTo(0,0);
 
 function render(){
   const r=({today:renderToday,houses:renderHouses,house:renderHouse,notes:renderNotes,
-            note:renderNote,settings:renderSettings,search:renderSearch})[view.name]||renderToday;
+            note:renderNote,settings:renderSettings,search:renderSearch,
+            housenotes:renderHouseNotes})[view.name]||renderToday;
   $app.innerHTML=r(view.param);
   bind();
   renderNav();
@@ -644,10 +647,24 @@ function renderHouse(id){
 
     ${photoGrid}
 
-    <div class="sec-head"><span class="label">Notes</span><span class="rule"></span></div>
-    <div class="card"><textarea class="input" data-house-notes placeholder="Site notes, measurements, reminders…" style="border:none;background:none;padding:0;min-height:70px">${esc(h.notes||'')}</textarea></div>
+    <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Notes</span><span class="rule"></span>${I.chevronR}</div>
+    <div class="card" data-open-house-notes="${h.id}" style="cursor:pointer">${h.notes?`<div style="white-space:pre-wrap;color:var(--paper-dim);font-size:14px;max-height:3.6em;overflow:hidden">${esc(h.notes.slice(0,180))}${h.notes.length>180?'…':''}</div>`:`<div class="muted" style="font-size:14px">Tap to add site notes, measurements, reminders…</div>`}</div>
 
     ${taskBlock}
+  </div>`;
+}
+
+/* ============================================================
+   PROJECT NOTES — full-screen editor
+   ============================================================ */
+function renderHouseNotes(houseId){
+  const h=houseById(houseId); if(!h) return renderHouses();
+  return `<div class="topbar">
+    <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
+    <div class="grow"><span class="eyebrow truncate">${esc(h.name)}</span><h1>Notes</h1></div>
+  </div>
+  <div class="wrap">
+    <textarea class="input" data-house-notes-full="${h.id}" placeholder="Site notes, measurements, reminders…" style="min-height:calc(100vh - 170px);font-size:15px;line-height:1.5">${esc(h.notes||'')}</textarea>
   </div>`;
 }
 
@@ -902,7 +919,15 @@ function bind(){
     const h=houseById(view.param); h.specs=h.specs.filter(s=>s.id!==b.dataset.delSpec); h.updatedAt=now(); persist.houses(); render();
   });
   const addHT=$app.querySelector('[data-add-house-task]'); if(addHT) addHT.onclick=()=>openTaskSheet(view.param);
-  const hn=$app.querySelector('[data-house-notes]'); if(hn) hn.onblur=()=>{ const h=houseById(view.param); if(h){h.notes=hn.value;h.updatedAt=now();persist.houses();} };
+  $app.querySelectorAll('[data-open-house-notes]').forEach(el=>el.onclick=()=>go('housenotes',el.dataset.openHouseNotes));
+  const hnFull=$app.querySelector('[data-house-notes-full]');
+  if(hnFull){
+    const hnId=hnFull.dataset.houseNotesFull;
+    const saveHn=()=>{ const h=houseById(hnId); if(h){ h.notes=hnFull.value; h.updatedAt=now(); persist.houses(); } };
+    let hnTimer=null;
+    hnFull.oninput=()=>{ clearTimeout(hnTimer); hnTimer=setTimeout(saveHn,400); };
+    hnFull.onblur=()=>{ clearTimeout(hnTimer); saveHn(); };
+  }
 
   /* Photos */
   $app.querySelectorAll('[data-add-photo]').forEach(el=>el.onchange=e=>handlePhoto(e,view.param));
@@ -932,6 +957,7 @@ function bind(){
 }
 
 function goBack(){
+  if(view.name==='housenotes'){ go('house', view.param); return; }
   const to = ({house:'houses', note:'notes', search:'today'})[view.name] || 'today';
   go(to);
 }
