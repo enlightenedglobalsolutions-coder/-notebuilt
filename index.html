@@ -1038,7 +1038,7 @@ function renderPrivacy(){
     <div class="sec-head"><span class="label">How EGS makes money</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">One-time purchase, no subscription. No ads, ever. We can't sell your data because we never have it in the first place.</div>
 
-    <div class="card row" data-go="support" style="cursor:pointer;margin-top:12px"><div class="grow"><div>Support EGS &amp; back up your data</div><div class="muted" style="font-size:13px">Founding Member perks, payment options, export/restore.</div></div><span class="chev">${I.chevronR}</span></div>
+    <div class="card row" data-go="support" style="cursor:pointer;margin-top:12px"><div class="grow"><div>Support EGS &amp; back up your data</div><div class="muted" style="font-size:13px">Payment options, export/restore, and how EGS works.</div></div><span class="chev">${I.chevronR}</span></div>
 
     <div class="card" style="margin-top:6px;text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--paper-faint)">Enlightened Global Solutions · Built in Canada<br>Read the code · check for yourself</div>
   </div>`;
@@ -1088,6 +1088,18 @@ function bindCopyButtons(scope){
   });
 }
 
+/* CHUNK17_SUPPORT_CORE_RESTRUCTURE
+   ============================================================
+   APP-SPECIFIC — edit only this block when reusing this page in
+   a new app. Everything in egsSupportCoreHtml() below is meant
+   to be copied verbatim, unedited, into every EGS app.
+   ============================================================ */
+const APP_BACKUP_DESC = "Save your projects, photos, notes and to-dos to a file. Keep it safe \u2014 you can restore it anytime, even on a new phone or after reinstalling.";
+const APP_MONETIZATION = {
+  model: 'paid', // 'paid' or 'free' \u2014 controls the section label below
+  blurb: "Notebuilt is a one-time purchase \u2014 no subscription, no trial that runs out, no features held hostage after 30 days. Pay once and it's yours, priced like a real tool because it's built to save you real time on the job. [Edit this line with your actual price once it's set.]"
+};
+
 function renderSupport(){
   const tabs=PAYMENT_TABS.map(t=>`<button class="btn sm ${t.id===supportTab?'primary':''}" data-pay-tab="${t.id}">${t.label}</button>`).join('');
   return `<div class="topbar">
@@ -1096,39 +1108,35 @@ function renderSupport(){
   </div>
   <div class="wrap">
     <div class="sec-head"><span class="label">Back up your data</span><span class="rule"></span></div>
-    <div class="card muted" style="font-size:13.5px;line-height:1.6">Save your projects, photos, notes and to-dos to a file. Keep it safe \u2014 you can restore it anytime, even on a new phone or after reinstalling.</div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_BACKUP_DESC}</div>
     <div class="row" style="gap:10px;margin:10px 0 22px">
       <button class="btn primary" style="flex:1" data-export>${I.download} Export</button>
       <label class="btn" style="flex:1;text-align:center;display:flex;align-items:center;justify-content:center;gap:8px">${I.upload} Restore<input type="file" accept="application/json,.json" hidden data-import></label>
     </div>
 
-    <div class="sec-head"><span class="label">Support EGS</span><span class="rule"></span></div>
-    <div class="card muted" style="font-size:13.5px;line-height:1.6">Enlightened Global Solutions is on a mission to make the world better \u2014 one job site, one app, one solution at a time. Your contribution lets us focus 100% on that mission.</div>
-    <div class="row" data-go="privacy" style="cursor:pointer;margin:6px 0 18px"><span class="muted" style="font-size:13px">\ud83d\udd12 Our privacy promise & how we make money \u2192</span></div>
+    <div class="sec-head"><span class="label">${APP_MONETIZATION.model==='paid'?'Pricing':'Free, always'}</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_MONETIZATION.blurb}</div>
 
-    <div class="card" style="background:var(--ink-2)">
-      <div style="font-weight:600;margin-bottom:6px">\ud83d\udce8 Founding Members' list</div>
-      <div class="muted" style="font-size:13px;line-height:1.5">Become a Founding Member ($21) and I'll personally add you to the private list \u2014 a short email only when there's real news: a new app, a real update. Nothing else.</div>
-      <div class="muted" style="font-size:11.5px;line-height:1.5;margin-top:8px">You'll get a one-click confirm email (double opt-in). No public signup, no tracking, never sold, leave anytime.</div>
-    </div>
+    ${egsSupportCoreHtml(tabs)}
+  </div>`;
+}
 
-    <div class="card" style="margin-top:12px">
-      <div style="font-family:var(--serif);font-size:17px;margin-bottom:10px">\u2605 Founding Member \u2014 $21 once</div>
-      <div class="muted" style="font-size:13.5px;line-height:1.8">
-        \u2713 This app, yours forever \u2014 never paywalled, never sold, never your data<br>
-        \u2713 Free lifetime trials of every app we build next<br>
-        \u2713 A direct line to the builder<br>
-        \u2713 A vote on what gets built next<br>
-        \u2713 A seat at the table \u2014 no shareholders, just the tradespeople who use it
-      </div>
-      <div class="muted" style="font-size:12px;margin-top:10px">Or give any amount below \u2014 every bit keeps EGS independent.</div>
-    </div>
+/* ============================================================
+   EGS CORE \u2014 SUPPORT SECTION
+   Copy this function verbatim into every new EGS app. Do not
+   edit the copy below \u2014 only PAYMENT_CONFIG (near the top of
+   the file) should ever change, and only to add real payment
+   links.
+   ============================================================ */
+function egsSupportCoreHtml(tabs){
+  return `<div class="sec-head"><span class="label">Support EGS</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">Enlightened Global Solutions is a one-person, Canadian shop building tools the way I'd want them built \u2014 privacy-first, no subscriptions, no shortcuts. If this app has been useful to you, a contribution below helps keep it that way.</div>
+    <div class="row" data-go="privacy" style="cursor:pointer;margin:6px 0 18px"><span class="muted" style="font-size:13px">\ud83d\udd12 Our privacy promise &amp; how we make money \u2192</span></div>
 
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin:18px 0 12px">${tabs}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin:4px 0 12px">${tabs}</div>
     <div id="pay-detail">${paymentDetailHtml(supportTab)}</div>
 
-    <div class="muted" style="font-size:12px;text-align:center;margin-top:22px;line-height:1.6">Contributions are voluntary and support EGS operations.<br>Every amount makes a difference. Thank you. \ud83d\ude4f</div>
-  </div>`;
+    <div class="card" style="margin-top:18px;text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--paper-faint)">Built by one person in Canada \u00b7 no shareholders, no ads, ever<br>Contributions are voluntary. Every bit helps keep EGS independent. Thank you.</div>`;
 }
 
 function openEditTask(id){

@@ -1,6 +1,6 @@
 /* Punch List service worker — offline-first cache.
    The cache name is bumped on every deploy (see deploy steps) so clients fetch fresh files. */
-const CACHE = 'punchlist-cache-v1783795744';
+const CACHE = 'punchlist-cache-v1783873923';
 const ASSETS = [
   './',
   './index.html',
