@@ -296,6 +296,16 @@
   #install-banner .txt{flex:1;font-size:13px;line-height:1.4;color:var(--paper-dim)}
   #install-banner .txt b{color:var(--paper);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
 
+  /* CHUNK21_BACKUP_NUDGE */
+  #backup-banner{
+    position:fixed;left:12px;right:12px;bottom:calc(var(--safe-b) + 14px);z-index:40;
+    background:var(--ink-3);border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px 10px 12px 16px;display:flex;align-items:center;gap:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  #backup-banner .txt{flex:1;font-size:13px;line-height:1.4;color:var(--paper-dim)}
+  #backup-banner .txt b{color:var(--paper);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
+
   /* ---- Toast ---- */
   #toast{
     position:fixed;left:50%;transform:translateX(-50%);z-index:200;
@@ -1774,6 +1784,7 @@ async function exportData(){
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download=`notebuilt-backup-${todayKey()}.json`; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast('Backup downloaded');
+  settings.lastBackupAt=now(); persist.settings();
 }
 async function importData(e){
   const file=e.target.files&&e.target.files[0]; if(!file)return;
@@ -1801,7 +1812,7 @@ const $lock=document.getElementById('lock');
 function showShell(show){ document.getElementById('app').classList.toggle('hidden',!show); $nav.classList.toggle('hidden',!show); }
 
 function lockGate(){
-  if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); return; }
+  if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); return; }
   showShell(false); $fab.classList.add('hidden');
   let entry='', verifying=true;
   const draw=(err='')=>{
@@ -1818,7 +1829,7 @@ function lockGate(){
       entry+=k;
       if(entry.length===4){
         const ok=(await sha(entry+settings.pinSalt))===settings.pinHash;
-        if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); }
+        if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); }
         else{ entry=''; draw('Wrong PIN'); }
       } else draw();
     });
@@ -1866,8 +1877,55 @@ if(isIOSDevice()) setTimeout(maybeShowInstallPrompt,1200);
 
 function maybeShowInstallPrompt(){
   if(installPromptShown||isStandaloneApp()||localStorage.getItem('installPromptDismissed')||!appUnlocked()) return;
+  if(document.getElementById('backup-banner')) return;
   if(deferredInstallPrompt) showInstallBanner('android');
   else if(isIOSDevice()) showInstallBanner('ios');
+}
+
+/* CHUNK21_BACKUP_NUDGE — quiet, infrequent, never a modal */
+async function maybeShowDataSafetyNudge(){
+  if(!appUnlocked()) return;
+  if(document.getElementById('install-banner')||document.getElementById('backup-banner')) return;
+  if(!houses.length) return;
+  const snoozeUntil=parseInt(localStorage.getItem('backupNudgeSnoozeUntil')||'0',10);
+  if(Date.now()<snoozeUntil) return;
+
+  const last=settings.lastBackupAt||0;
+  const daysSince=last?(Date.now()-last)/86400000:Infinity;
+  const backupDue=daysSince>=21;
+
+  let notPersistent=false;
+  if(navigator.storage&&navigator.storage.persisted){
+    try{ notPersistent=!(await navigator.storage.persisted()); }catch(e){}
+  }
+
+  if(!backupDue&&!notPersistent) return;
+  showDataSafetyBanner(!last, notPersistent);
+}
+function showDataSafetyBanner(neverBackedUp, notPersistent){
+  if(document.getElementById('backup-banner')||document.getElementById('install-banner')) return;
+  let msg;
+  if(neverBackedUp&&notPersistent) msg="You haven't backed up yet, and this browser hasn't confirmed your data is protected from being cleared.";
+  else if(neverBackedUp) msg="You haven't exported a backup yet. Keep a copy somewhere safe.";
+  else if(notPersistent) msg="It's been a while since your last backup, and this browser hasn't confirmed your data is protected from being cleared.";
+  else msg="It's been a while since your last backup. Keep a copy somewhere safe.";
+  const el=document.createElement('div');
+  el.id='backup-banner';
+  el.innerHTML=`<div class="txt"><b>Back up your projects</b>${msg}</div>
+    <button class="btn primary sm" id="backup-go">Back up now</button>
+    <button class="icon-btn" id="backup-x" aria-label="Not now" style="width:36px;height:36px;flex:none">${I.x}</button>`;
+  document.body.appendChild(el);
+  document.getElementById('backup-go').onclick=async()=>{
+    await exportData();
+    dismissBackupBanner();
+  };
+  document.getElementById('backup-x').onclick=()=>{
+    localStorage.setItem('backupNudgeSnoozeUntil', String(Date.now()+7*86400000));
+    dismissBackupBanner();
+  };
+}
+function dismissBackupBanner(){
+  const el=document.getElementById('backup-banner'); if(el) el.remove();
 }
 function showInstallBanner(mode){
   if(installPromptShown) return;
