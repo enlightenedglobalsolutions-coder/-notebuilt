@@ -477,7 +477,7 @@ const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" 
     }
   } catch(e){}
 })();
-const K = { houses:'pl.houses', tasks:'pl.tasks', notes:'pl.notes', settings:'pl.settings' };
+const K = { houses:'pl.houses', tasks:'pl.tasks', notes:'pl.notes', settings:'pl.settings', categories:'pl.categories' };
 function load(key,fallback){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
 function save(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
 let houses = load(K.houses,[]);
@@ -488,7 +488,8 @@ let pendingNoteHouseId=null;
 let settings = load(K.settings,{ pinHash:null, pinSalt:null });
 if(!settings.sortHouses) settings.sortHouses='updated';
 const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
-                  notes:()=>save(K.notes,notes), settings:()=>save(K.settings,settings) };
+                  notes:()=>save(K.notes,notes), settings:()=>save(K.settings,settings),
+                  categories:()=>save(K.categories,categories) };
 
 const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(36).slice(2));
 const now = ()=> Date.now();
@@ -548,10 +549,16 @@ const HOUSE_STATUS=['active','quoting','done'];
 /* CHUNK1_SORT_JOBTYPE */
 const JOB_TYPES=['paneling','flooring','trim','painting','drywall','electrical','plumbing','general'];
 const JOB_TYPE_LABEL={paneling:'Paneling',flooring:'Flooring',trim:'Trim / Finish Carpentry',painting:'Painting',drywall:'Drywall',electrical:'Electrical',plumbing:'Plumbing',general:'General / Other'};
-/* CHUNK19_CATEGORY_SYSTEM */
-const CATEGORIES=['construction','apps','personal','other'];
-const CATEGORY_LABEL={construction:'Construction',apps:'Apps & Code',personal:'Personal',other:'Other'};
-const CATEGORY_ICON={construction:'🏗️',apps:'💻',personal:'📋',other:'📁'};
+/* CHUNK20_CUSTOM_CATEGORIES */
+let categories = load(K.categories, [
+  {id:'construction', label:'Construction', icon:'🏗️'},
+  {id:'apps', label:'Apps & Code', icon:'💻'},
+  {id:'personal', label:'Personal', icon:'📋'},
+  {id:'other', label:'Other', icon:'📁'}
+]);
+function categoryById(id){ return categories.find(c=>c.id===id); }
+function categoryLabel(id){ const c=categoryById(id); return c?c.label:'Uncategorized'; }
+function categoryIcon(id){ const c=categoryById(id); return c?c.icon:'❓'; }
 const SORT_OPTIONS=[
   {id:'updated',label:'Last updated'},
   {id:'created',label:'Date created (newest)'},
@@ -570,7 +577,8 @@ function sortHousesList(list){
   if(mode==='created') arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
   else if(mode==='alpha') arr.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   else if(mode==='status') arr.sort((a,b)=>(statusOrder[a.status]??9)-(statusOrder[b.status]??9)||(b.updatedAt-a.updatedAt));
-  else if(mode==='category') arr.sort((a,b)=>(CATEGORY_LABEL[a.category]||'').localeCompare(CATEGORY_LABEL[b.category]||'')||(b.updatedAt-a.updatedAt));
+  else if(mode==='category') arr.sort((a,b)=>(categoryLabel(a.category)||'').localeCompare(categoryLabel(b.category)||'')||(b.updatedAt-a.updatedAt));
+
   else if(mode==='jobtype') arr.sort((a,b)=>(JOB_TYPE_LABEL[a.jobType]||'').localeCompare(JOB_TYPE_LABEL[b.jobType]||'')||(b.updatedAt-a.updatedAt));
   else if(mode==='open') arr.sort((a,b)=>openCount(b)-openCount(a)||(b.updatedAt-a.updatedAt));
   else arr.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
@@ -647,18 +655,21 @@ function renderHouses(){
     <button class="icon-btn" data-sort-houses aria-label="Sort projects: ${esc(sortLabel)}">${I.square}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No projects yet</div><div>Add a project to keep its photos, notes and to-dos in one place — a job site, an app you're building, or anything else.</div></div>`;
+  const hasUncategorized=houses.some(h=>!categoryById(h.category));
   const filterChips=`<div class="row" style="gap:8px;flex-wrap:wrap;margin:12px 0 2px">
     <button class="chip-filter ${categoryFilter==='all'?'active':''}" data-cat-filter="all">All</button>
-    ${CATEGORIES.map(c=>`<button class="chip-filter ${categoryFilter===c?'active':''}" data-cat-filter="${c}">${CATEGORY_ICON[c]} ${CATEGORY_LABEL[c]}</button>`).join('')}
+    ${categories.map(c=>`<button class="chip-filter ${categoryFilter===c.id?'active':''}" data-cat-filter="${c.id}">${c.icon} ${esc(c.label)}</button>`).join('')}
+    ${hasUncategorized?`<button class="chip-filter ${categoryFilter==='__none__'?'active':''}" data-cat-filter="__none__">❓ Uncategorized</button>`:''}
+    <button class="chip-filter" data-manage-categories>⚙️ Edit</button>
   </div>`;
-  const filtered=categoryFilter==='all'?houses:houses.filter(h=>h.category===categoryFilter);
+  const filtered=categoryFilter==='all'?houses:(categoryFilter==='__none__'?houses.filter(h=>!categoryById(h.category)):houses.filter(h=>h.category===categoryFilter));
   const cards=filtered.length?sortHousesList(filtered).map(h=>{
     const open=tasks.filter(t=>t.houseId===h.id&&t.status!=='done').length;
     const jt=h.jobType&&JOB_TYPE_LABEL[h.jobType]?JOB_TYPE_LABEL[h.jobType]:'';
     return `<div class="card house-card" data-house="${h.id}">
       <div class="house-cover" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
       <div class="hc-body"><div class="row"><div class="grow"><div class="hc-name">${esc(h.name)}</div>${h.address?`<div class="hc-addr truncate">${esc(h.address)}</div>`:''}</div>
-        <span class="cat-badge" title="${esc(CATEGORY_LABEL[h.category]||'')}">${CATEGORY_ICON[h.category]||''}</span>
+        <span class="cat-badge" title="${esc(categoryLabel(h.category))}">${categoryIcon(h.category)}</span>
         <span class="chip status-${h.status}">${esc(h.status)}</span></div>
         <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${jt?`${esc(jt)} · `:''}${(h.specs||[]).length} specs · ${(h.photos||[]).length} photos${open?` · ${open} open`:''}</div>
       </div></div>`;
@@ -705,7 +716,7 @@ function renderHouse(id){
   </div>
   <div class="wrap">
     <div class="house-cover" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
-    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" title="${esc(CATEGORY_LABEL[h.category]||'')}">${CATEGORY_ICON[h.category]||''}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
+    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${h.id}" style="cursor:pointer" title="Tap to move to another category">${categoryIcon(h.category)}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
 
     ${specBlocks||''}
     <button class="btn block sm" data-add-spec style="margin:2px 0 4px">${I.plus} Add spec (paint, flooring, trim…)</button>
@@ -925,7 +936,7 @@ function openHouseSheet(edit=null){
   const h=edit||{};
   const cat=h.category||'construction';
   sheet(`<h2>${edit?'Edit project':'New project'}</h2>
-    <div class="field"><label>Category</label><select class="input" id="h-category">${CATEGORIES.map(c=>`<option value="${c}" ${cat===c?'selected':''}>${CATEGORY_ICON[c]} ${CATEGORY_LABEL[c]}</option>`).join('')}</select></div>
+    <div class="field"><label>Category</label><select class="input" id="h-category">${categories.map(c=>`<option value="${c.id}" ${cat===c.id?'selected':''}>${c.icon} ${esc(c.label)}</option>`).join('')}</select></div>
     <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
     <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(h.address||'')}"></div>
     <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -952,6 +963,76 @@ function openHouseSheet(edit=null){
     tasks.forEach(t=>{ if(t.houseId===edit.id) t.houseId=null; });
     notes.forEach(nn=>{ if(nn.houseId===edit.id) nn.houseId=null; });
     persist.houses(); persist.tasks(); persist.notes(); closeSheet(); go('houses'); toast('Project deleted');
+  };
+}
+
+/* CHUNK20_CUSTOM_CATEGORIES */
+function openCategoryPicker(houseId){
+  const h=houseById(houseId); if(!h) return;
+  sheet(`<h2>Move to category</h2>
+    ${categories.map(c=>`<button class="btn block" data-move-cat="${c.id}" style="justify-content:flex-start;gap:10px;margin-bottom:8px">${c.icon} ${esc(c.label)}${h.category===c.id?' '+I.check:''}</button>`).join('')}`);
+  $mr.querySelectorAll('[data-move-cat]').forEach(b=>b.onclick=()=>{
+    h.category=b.dataset.moveCat; h.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Moved to '+categoryLabel(h.category));
+  });
+}
+
+function categoryRowsHtml(){
+  return categories.map((c,i)=>`<div class="card" style="margin-bottom:8px;padding:10px">
+    <div class="row" style="gap:8px;align-items:center">
+      <input class="input" style="width:50px;text-align:center;padding:8px;flex:none" value="${esc(c.icon)}" data-cat-icon="${c.id}" maxlength="4">
+      <input class="input grow" value="${esc(c.label)}" data-cat-label="${c.id}">
+    </div>
+    <div class="row" style="gap:8px;margin-top:8px;justify-content:flex-end">
+      <button class="btn sm" data-cat-up="${c.id}" ${i===0?'disabled':''}>\u2191</button>
+      <button class="btn sm" data-cat-down="${c.id}" ${i===categories.length-1?'disabled':''}>\u2193</button>
+      <button class="btn sm danger" data-cat-del="${c.id}">${I.trash} Delete</button>
+    </div>
+  </div>`).join('');
+}
+function wireCategoryRows(){
+  $mr.querySelectorAll('[data-cat-icon]').forEach(inp=>{
+    inp.onblur=()=>{ const c=categoryById(inp.dataset.catIcon); if(c){ c.icon=inp.value.trim()||'\ud83c\udff7\ufe0f'; persist.categories(); render(); } };
+  });
+  $mr.querySelectorAll('[data-cat-label]').forEach(inp=>{
+    inp.onblur=()=>{ const c=categoryById(inp.dataset.catLabel); if(c && inp.value.trim()){ c.label=inp.value.trim(); persist.categories(); render(); } };
+  });
+  $mr.querySelectorAll('[data-cat-up]').forEach(b=>b.onclick=()=>moveCategory(b.dataset.catUp,-1));
+  $mr.querySelectorAll('[data-cat-down]').forEach(b=>b.onclick=()=>moveCategory(b.dataset.catDown,1));
+  $mr.querySelectorAll('[data-cat-del]').forEach(b=>b.onclick=()=>deleteCategory(b.dataset.catDel));
+}
+function moveCategory(id,dir){
+  const i=categories.findIndex(c=>c.id===id); if(i<0)return;
+  const j=i+dir; if(j<0||j>=categories.length)return;
+  [categories[i],categories[j]]=[categories[j],categories[i]];
+  persist.categories(); render(); openManageCategories();
+}
+function deleteCategory(id){
+  const affected=houses.filter(h=>h.category===id).length;
+  const msg=affected?`Delete this category? ${affected} project${affected===1?'':'s'} using it will show as Uncategorized \u2014 nothing is deleted.`:'Delete this category?';
+  if(!confirm(msg)) return;
+  categories=categories.filter(c=>c.id!==id);
+  houses.forEach(h=>{ if(h.category===id) h.category=null; });
+  if(categoryFilter===id) categoryFilter='all';
+  persist.categories(); persist.houses(); render(); openManageCategories();
+}
+function openManageCategories(){
+  sheet(`<h2>Categories</h2>
+    <div class="muted" style="font-size:12.5px;margin-bottom:12px">Rename, change the emoji, reorder, or remove categories. Projects in a deleted category show as Uncategorized instead of disappearing.</div>
+    <div id="cat-list">${categoryRowsHtml()}</div>
+    <div class="card" style="margin-top:4px;background:var(--ink-2)">
+      <div class="row" style="gap:8px;align-items:center">
+        <input class="input" style="width:50px;text-align:center;padding:8px;flex:none" placeholder="\ud83c\udff7\ufe0f" id="cat-new-icon" maxlength="4">
+        <input class="input grow" placeholder="New category name" id="cat-new-label">
+      </div>
+      <button class="btn primary block sm" id="cat-new-save" style="margin-top:8px">${I.plus} Add category</button>
+    </div>`);
+  wireCategoryRows();
+  $mr.querySelector('#cat-new-save').onclick=()=>{
+    const label=$mr.querySelector('#cat-new-label').value.trim(); if(!label)return;
+    const icon=$mr.querySelector('#cat-new-icon').value.trim()||'\ud83c\udff7\ufe0f';
+    categories.push({id:uid(),label,icon});
+    persist.categories(); render();
+    openManageCategories();
   };
 }
 
@@ -995,6 +1076,8 @@ function bind(){
   $app.querySelectorAll('[data-share-house]').forEach(b=>b.onclick=()=>openShareSheet(b.dataset.shareHouse));
   const sortBtn=$app.querySelector('[data-sort-houses]'); if(sortBtn) sortBtn.onclick=openSortSheet;
   $app.querySelectorAll('[data-cat-filter]').forEach(b=>b.onclick=()=>{ categoryFilter=b.dataset.catFilter; render(); });
+  $app.querySelectorAll('[data-manage-categories]').forEach(b=>b.onclick=openManageCategories);
+  $app.querySelectorAll('[data-open-cat-picker]').forEach(b=>b.onclick=()=>openCategoryPicker(b.dataset.openCatPicker));
   const addSpec=$app.querySelector('[data-add-spec]'); if(addSpec) addSpec.onclick=()=>openSpecSheet(view.param);
   /* CHUNK5_CONFIRM_DELETES */
   $app.querySelectorAll('[data-del-spec]').forEach(b=>b.onclick=()=>{
