@@ -1131,6 +1131,7 @@ function bind(){
   const pinOff=$app.querySelector('[data-pin-off]'); if(pinOff) pinOff.onclick=()=>{ if(confirm('Turn off the app lock?')){ settings.pinHash=null; settings.pinSalt=null; persist.settings(); render(); toast('App lock off'); } };
   const exp=$app.querySelector('[data-export]'); if(exp) exp.onclick=exportData;
   const imp=$app.querySelector('[data-import]'); if(imp) imp.onchange=importData;
+  const impProj=$app.querySelector('[data-import-project]'); if(impProj) impProj.onchange=importSharedProject;
   $app.querySelectorAll('[data-pay-tab]').forEach(b=>b.onclick=()=>{
     supportTab=b.dataset.payTab;
     $app.querySelectorAll('[data-pay-tab]').forEach(x=>x.classList.toggle('primary',x.dataset.payTab===supportTab));
@@ -1246,6 +1247,10 @@ function renderSupport(){
       <button class="btn primary" style="flex:1" data-export>${I.download} Export</button>
       <label class="btn" style="flex:1;text-align:center;display:flex;align-items:center;justify-content:center;gap:8px">${I.upload} Restore<input type="file" accept="application/json,.json" hidden data-import></label>
     </div>
+
+    <div class="sec-head"><span class="label">Import a shared project</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">Received a project file from another Notebuilt user? Bring it in as a brand-new project — it won't touch anything else already in your app.</div>
+    <label class="btn block" style="margin:10px 0 22px;display:flex;align-items:center;justify-content:center;gap:8px">${I.upload} Import shared project<input type="file" accept="application/json,.json" hidden data-import-project></label>
 
     <div class="sec-head"><span class="label">${APP_MONETIZATION.model==='paid'?'Pricing':'Free, always'}</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_MONETIZATION.blurb}</div>
@@ -1772,6 +1777,51 @@ async function saveAnnotation(){
    ============================================================ */
 function blobToB64(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=()=>rej(r.error); r.readAsDataURL(blob); }); }
 function b64ToBlob(b64,type='image/jpeg'){ const bin=atob(b64); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return new Blob([a],{type}); }
+
+/* CHUNK22_IMPORT_SHARED_PROJECT */
+async function importSharedProject(e){
+  const file=e.target.files&&e.target.files[0]; if(!file) return;
+  try{
+    const text=await file.text(); const d=JSON.parse(text);
+    if(d.app!=='notebuilt-project-share') throw new Error('Not a shared Notebuilt project file');
+    const p=d.project||{};
+    if(!p.name) throw new Error('Missing project name');
+    const newId=uid();
+    const category=(typeof categoryById==='function'&&categoryById('construction'))?'construction':null;
+    const nh={
+      id:newId, name:p.name, category,
+      status:p.status||'active', jobType:p.jobType||'',
+      address:p.address||'', notes:p.notes||'',
+      specs:(p.specs||[]).map(s=>({id:uid(),category:s.category,room:s.room,label:s.label,value:s.value,note:s.note,createdAt:now()})),
+      photos:[], cover:null, createdAt:now(), updatedAt:now()
+    };
+    houses.push(nh);
+    if(Array.isArray(p.tasks)&&p.tasks.length){
+      p.tasks.forEach(t=>{
+        tasks.push({id:uid(),text:t.text,status:t.status||'todo',houseId:newId,createdAt:now(),updatedAt:now(),doneAt:null,dueDate:null});
+      });
+      persist.tasks();
+    }
+    if(p.photos){
+      for(const [oldPid,pd] of Object.entries(p.photos)){
+        try{
+          const newPid=uid();
+          const blob=b64ToBlob(pd.b64);
+          await photoPut({id:newPid,blob,houseId:newId,createdAt:pd.createdAt||now()});
+          nh.photos.push(newPid);
+          if(!nh.cover) nh.cover=newPid;
+        }catch(err){}
+      }
+    }
+    persist.houses();
+    e.target.value='';
+    go('house',newId);
+    toast('Project imported');
+  }catch(err){
+    e.target.value='';
+    alert('Could not import: '+(err.message||'that file doesn\'t look like a shared Notebuilt project'));
+  }
+}
 
 async function exportData(){
   toast('Building backup…');
