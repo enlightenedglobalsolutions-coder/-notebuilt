@@ -151,6 +151,23 @@
     background-size:22px 22px;
   }
   .house-cover svg{width:34px;height:34px;position:relative}
+  /* ===== SORTED ENGINE — picker grid ===== */
+  .sorted-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+    margin-top:12px;max-height:60vh;overflow-y:auto;padding-bottom:4px;
+  }
+  .sorted-cell{
+    position:relative;aspect-ratio:1/1;border-radius:var(--radius-sm);
+    background:var(--ink-2) center/cover no-repeat;border:1px solid var(--line);
+    padding:0;cursor:pointer;overflow:hidden;
+  }
+  .sorted-cell.is-current{border-color:var(--brass);box-shadow:0 0 0 2px var(--brass)}
+  .sorted-star{
+    position:absolute;top:5px;right:5px;display:grid;place-items:center;
+    width:26px;height:26px;border-radius:50%;
+    background:rgba(21,24,29,.72);color:var(--brass);
+  }
+  .sorted-star svg{width:16px;height:16px}
   .house-card .hc-body{padding:12px 14px}
   .house-card .hc-name{font-family:var(--serif);font-size:18px;font-weight:600}
   .house-card .hc-addr{font-size:13px;color:var(--paper-dim);margin-top:1px}
@@ -725,7 +742,7 @@ function renderHouse(id){
     <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit project">${I.edit}</button>
   </div>
   <div class="wrap">
-    <div class="house-cover" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
+    <div class="house-cover" data-edit-cover="${h.id}" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px;cursor:pointer" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
     <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${h.id}" style="cursor:pointer" title="Tap to move to another category">${categoryIcon(h.category)}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
 
     ${specBlocks||''}
@@ -1115,6 +1132,7 @@ function bind(){
     if(h.cover===pid) h.cover=null; h.updatedAt=now(); persist.houses(); render();
   });
   $app.querySelectorAll('.photo-grid .ph[data-photo]').forEach(el=>el.onclick=()=>openViewer(view.param, el.dataset.photo));
+  $app.querySelectorAll('[data-edit-cover]').forEach(el=>el.onclick=()=>openCoverPicker(el.dataset.editCover));
 
   /* Notes */
   $app.querySelectorAll('[data-note]').forEach(c=>c.onclick=()=>go('note',c.dataset.note));
@@ -1327,6 +1345,55 @@ async function handlePhoto(e,houseId){
   else toast(multi?`${saved} photos saved`:'Photo saved');
 }
 
+/* ===== SORTED ENGINE START =====
+   Sorted - reusable media-sorting engine, shared across EGS apps (Notebuilt, Kept, standalone Sorted).
+   The engine never touches storage: the host passes media-item refs plus a resolve() that turns a
+   ref into a displayable URL, and receives the user's choice via callback. The host owns persistence.
+   First feature built on it: the cover-photo picker below. Later features (dedupe, corruption
+   detection, integrity manifest) reuse this same list + resolve + grid spine. */
+const Sorted=(function(){
+  /* Open a picker sheet: a grid of media thumbnails, the current pick starred, tap to choose.
+     opts = { items:[ref,...], resolve:ref=>Promise<url|null>, current:ref|null, title, onPick:ref=>void } */
+  function pickGrid(opts){
+    const items=(opts.items||[]);
+    if(!items.length){ toast('No photos to choose from yet'); return; }
+    const cur=opts.current;
+    const cells=items.map(ref=>`<button class="sorted-cell${ref===cur?' is-current':''}" data-sorted-pick="${esc(ref)}" data-sorted-thumb="${esc(ref)}" aria-label="Choose photo">${ref===cur?`<span class="sorted-star">${I.star}</span>`:''}</button>`).join('');
+    sheet(`<h2>${esc(opts.title||'Choose photo')}</h2><div class="sorted-grid">${cells}</div>`);
+    $mr.querySelectorAll('[data-sorted-thumb]').forEach(async el=>{
+      const u=await opts.resolve(el.getAttribute('data-sorted-thumb'));
+      if(u) el.style.backgroundImage=`url(${u})`;
+    });
+    $mr.querySelectorAll('[data-sorted-pick]').forEach(el=>el.onclick=()=>{
+      const ref=el.getAttribute('data-sorted-pick');
+      closeSheet();
+      if(opts.onPick) opts.onPick(ref);
+    });
+  }
+  return { pickGrid };
+})();
+
+/* Cover-photo picker (first feature on the Sorted engine) */
+function openCoverPicker(houseId){
+  const h=houseById(houseId); if(!h) return;
+  Sorted.pickGrid({
+    items:(h.photos||[]),
+    resolve:photoURL,
+    current:h.cover,
+    title:'Choose cover photo',
+    onPick:(pid)=>{ h.cover=pid; h.updatedAt=now(); persist.houses(); render(); toast('Cover updated'); }
+  });
+}
+/* Set the currently-viewed photo as the project cover, straight from the viewer */
+function setViewerCover(){
+  const pid=vw.photos[vw.index], h=houseById(vw.houseId);
+  if(!h||!pid) return;
+  h.cover=pid; h.updatedAt=now(); persist.houses();
+  if(view.name==='house') render();
+  toast('Set as cover');
+}
+/* ===== SORTED ENGINE END ===== */
+
 /* fill in any cover/photo backgrounds from IndexedDB after render */
 async function hydratePhotos(){
   for(const el of $app.querySelectorAll('[data-cover]')){
@@ -1365,6 +1432,7 @@ async function renderViewerFrame(){
       <button class="icon-btn" data-v-close aria-label="Close">${I.x}</button>
       <span class="v-count">${vw.index+1} of ${vw.photos.length}</span>
       <div class="v-actions">
+        <button class="icon-btn" data-v-cover aria-label="Set as project cover">${I.star}</button>
         <button class="icon-btn" data-v-rotate aria-label="Rotate photo">${I.rotate}</button>
         <button class="icon-btn" data-v-markup aria-label="Add markup">${I.edit}</button>
         <button class="icon-btn danger" data-v-del aria-label="Delete photo">${I.trash}</button>
@@ -1376,6 +1444,7 @@ async function renderViewerFrame(){
   $viewer.querySelector('[data-v-del]').onclick=deleteViewerPhoto;
   $viewer.querySelector('[data-v-rotate]').onclick=rotatePhoto;
   $viewer.querySelector('[data-v-markup]').onclick=openAnnotate;
+  $viewer.querySelector('[data-v-cover]').onclick=setViewerCover;
   const img=$viewer.querySelector('#v-img');
   const url=await photoURL(pid); if(url) img.src=url;
   bindViewerGestures();
