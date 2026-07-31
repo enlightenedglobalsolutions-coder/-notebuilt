@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.07.19-1632';</script>
+<script>window.EGS_VERSION = '2026.07.31-1502';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -398,6 +398,47 @@
     text-transform:uppercase;color:var(--paper-faint);padding:8px 0 calc(var(--safe-b) + 10px);flex:none;
   }
 
+  /* VAULT_CEREMONY */
+  #vault{
+    position:fixed;inset:0;z-index:110;background:var(--ink);
+    display:flex;flex-direction:column;overflow-y:auto;
+    padding:calc(var(--safe-t) + 26px) 22px calc(var(--safe-b) + 26px);
+    max-width:680px;margin:0 auto;
+  }
+  #vault .v-mark{display:grid;place-items:center;color:var(--brass);margin-bottom:14px}
+  #vault .v-mark svg{width:46px;height:46px}
+  #vault h2{font-family:var(--serif);font-size:23px;margin:0 0 14px;text-align:center}
+  #vault .v-copy{font-size:15px;line-height:1.62;color:var(--paper-dim);margin-bottom:20px}
+  #vault .v-copy b{color:var(--paper)}
+  #vault .v-steps{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--paper-faint);text-align:center;margin-bottom:18px;
+  }
+  #vault .v-actions{margin-top:auto;padding-top:20px;display:flex;flex-direction:column;gap:10px}
+  .v-err{color:var(--danger);font-size:13px;min-height:19px;margin:2px 0 6px}
+  .v-check{
+    display:flex;align-items:flex-start;gap:12px;cursor:pointer;font-size:14px;line-height:1.5;
+    background:var(--ink-2);border:1px solid var(--line-soft);border-radius:var(--radius);padding:14px;
+  }
+  .v-check input{width:24px;height:24px;flex:none;accent-color:var(--brass);margin-top:1px}
+  .btn[disabled]{opacity:.38;pointer-events:none}
+  .lock-chip{
+    display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--brass);border:1px solid var(--brass);
+    border-radius:999px;padding:4px 9px;white-space:nowrap;
+  }
+  .lock-chip svg{width:12px;height:12px}
+  .lock-hero{display:inline-grid;place-items:center;color:var(--brass)}
+  .lock-hero svg{width:46px;height:46px}
+  #vault-busy{
+    position:fixed;inset:0;z-index:120;background:rgba(10,12,15,.94);display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:30px;text-align:center;
+  }
+  #vault-busy .vb-t{font-family:var(--serif);font-size:19px}
+  #vault-busy .vb-s{font-family:var(--mono);font-size:12px;color:var(--paper-dim);letter-spacing:.06em}
+  #vault-busy .vb-bar{width:min(280px,80vw);height:5px;border-radius:3px;background:var(--ink-3);overflow:hidden}
+  #vault-busy .vb-fill{height:100%;background:var(--brass);width:0%;transition:width .18s}
+
   .hidden{display:none!important}
   hr.div{border:none;border-top:1px solid var(--line-soft);margin:14px 0}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -430,6 +471,7 @@
 <div id="modal-root"></div>
 <div id="viewer" class="hidden"></div>
 <div id="annotate" class="hidden"></div>
+<div id="vault" class="hidden"></div>
 <div id="toast"></div>
 
 <script>
@@ -577,10 +619,203 @@ function downscale(file){
   });
 }
 const _objUrls=new Map();
+
+/* ============================================================
+   VAULT_CORE — Protected Projects
+   A protected project's contents are encrypted at rest under a passphrase
+   that is NOT the app PIN. The key exists only in memory, only while the
+   vault is unlocked. There is no recovery and no backdoor — by design.
+   ============================================================ */
+const VAULT_ITER = 600000;                          /* PBKDF2 rounds */
+const VAULT_VERIFIER_TEXT = 'notebuilt-vault-ok';
+const VAULT_IDLE_MS = 15*60*1000;                   /* idle auto-relock */
+const VAULT_MIN_PASS = 8;
+
+let _vaultKey = null;             /* CryptoKey — memory only, never persisted */
+let _vaultCache = new Map();      /* iv -> plaintext. Wiped on relock. */
+let _vaultUrlIds = new Set();     /* photo ids whose object URL came from ciphertext */
+let _vaultIdleTimer = null;
+let _vaultLoading = null;
+
+/* ---------- base64 <-> bytes (chunked: a 1000px JPEG blows the arg limit) ---------- */
+function b64FromBytes(buf){
+  const b = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
+  let s='';
+  for(let i=0;i<b.length;i+=8192) s += String.fromCharCode.apply(null, b.subarray(i,i+8192));
+  return btoa(s);
+}
+function bytesFromB64(s){
+  const bin=atob(s); const a=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i);
+  return a;
+}
+
+/* An encrypted value is an OBJECT where a STRING used to be. That makes the
+   test unambiguous, and it makes a half-migrated project self-describing —
+   which is what lets an interrupted encrypt-in-place simply be re-run. */
+function isEnc(v){ return !!v && typeof v==='object' && v.enc===1 && typeof v.iv==='string'; }
+function isEncPhoto(rec){ return !!rec && rec.enc===1 && !!rec.ct; }
+
+function vaultUnlocked(){ return !!_vaultKey; }
+function vaultExists(){ return !!(settings.vault && settings.vault.salt && settings.vault.verifier); }
+function isProtected(houseId){ const h=houseById(houseId); return !!(h && h.protected); }
+
+async function vaultDeriveKey(pass, saltB64){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt:bytesFromB64(saltB64), iterations:VAULT_ITER, hash:'SHA-256' },
+    base, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+
+/* A fresh random IV on EVERY write. Never reused. */
+async function vaultSealBytes(bytes){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, _vaultKey, bytes);
+  return { iv:b64FromBytes(iv), ct };
+}
+async function vaultOpenBytes(ivB64, ct){
+  return crypto.subtle.decrypt({name:'AES-GCM', iv:bytesFromB64(ivB64)}, _vaultKey, ct);
+}
+async function vaultSealText(str){
+  const r = await vaultSealBytes(new TextEncoder().encode(str==null?'':String(str)));
+  return { enc:1, iv:r.iv, ct:b64FromBytes(r.ct) };
+}
+async function vaultOpenText(rec){
+  return new TextDecoder().decode(await vaultOpenBytes(rec.iv, bytesFromB64(rec.ct)));
+}
+/* Seal only what isn't sealed already — the idempotence that makes resume safe. */
+async function vaultSealField(v){ return isEnc(v) ? v : vaultSealText(v==null?'':String(v)); }
+async function vaultOpenField(v){ return isEnc(v) ? vaultOpenText(v) : (v==null?'':String(v)); }
+
+/* ---------- reading encrypted text from synchronous renderers ----------
+   The renderers are synchronous string builders; decryption is not. Rather
+   than rewrite them, warm a cache for one project and re-render — the same
+   shape hydratePhotos() already uses. Keyed by IV, which is unique per record
+   per write, so the cache self-invalidates the moment a value is re-encrypted. */
+function vt(v){
+  if(!isEnc(v)) return v==null?'':v;
+  const hit=_vaultCache.get(v.iv);
+  return hit==null?'':hit;
+}
+function vaultNeeds(v){ return isEnc(v) && !_vaultCache.has(v.iv); }
+function vaultPendingFor(houseId){
+  const h=houseById(houseId); if(!h) return false;
+  return vaultNeeds(h.address) || vaultNeeds(h.notes)
+    || (h.specs||[]).some(s=>vaultNeeds(s.room)||vaultNeeds(s.label)||vaultNeeds(s.value)||vaultNeeds(s.note))
+    || notes.some(n=>n.houseId===houseId && (vaultNeeds(n.title)||vaultNeeds(n.body)))
+    || tasks.some(t=>t.houseId===houseId && vaultNeeds(t.text));
+}
+/* Decrypt ONE project's text on demand. Never a bulk decrypt of the vault. */
+async function vaultLoadProject(houseId){
+  if(!vaultUnlocked()) return;
+  const h=houseById(houseId); if(!h) return;
+  const vals=[];
+  const collect=v=>{ if(vaultNeeds(v)) vals.push(v); };
+  collect(h.address); collect(h.notes);
+  (h.specs||[]).forEach(s=>{ collect(s.room); collect(s.label); collect(s.value); collect(s.note); });
+  notes.forEach(n=>{ if(n.houseId===houseId){ collect(n.title); collect(n.body); } });
+  tasks.forEach(t=>{ if(t.houseId===houseId) collect(t.text); });
+  for(const v of vals){
+    try{ _vaultCache.set(v.iv, await vaultOpenText(v)); }
+    catch(e){ _vaultCache.set(v.iv, ''); }
+  }
+}
+/* Safe to call on every render: warms the screen we're about to paint, then repaints. */
+function vaultEnsureProject(houseId){
+  if(!vaultUnlocked() || !isProtected(houseId)) return;
+  if(_vaultLoading===houseId || !vaultPendingFor(houseId)) return;
+  _vaultLoading=houseId;
+  vaultLoadProject(houseId).then(()=>{ _vaultLoading=null; render(); })
+                           .catch(()=>{ _vaultLoading=null; });
+}
+
+/* ---------- lock / unlock lifecycle ---------- */
+async function vaultUnlock(pass){
+  if(!vaultExists()) return false;
+  const prev=_vaultKey;
+  try{
+    _vaultKey = await vaultDeriveKey(pass, settings.vault.salt);
+    if(await vaultOpenText(settings.vault.verifier) !== VAULT_VERIFIER_TEXT) throw new Error('bad passphrase');
+  }catch(e){ _vaultKey=prev; return false; }
+  vaultTouch();
+  vaultResumeMigration();   /* VAULT_TOGGLE — finish anything that was interrupted */
+  return true;
+}
+function vaultRelock(silent){
+  const wasOpen = !!_vaultKey;
+  _vaultKey=null; _vaultCache.clear(); _vaultLoading=null;
+  clearTimeout(_vaultIdleTimer); _vaultIdleTimer=null;
+  /* Revoke every object URL built from ciphertext — otherwise a decrypted
+     image stays reachable in memory after the vault is locked. */
+  for(const id of _vaultUrlIds){
+    const u=_objUrls.get(id);
+    if(u){ URL.revokeObjectURL(u); _objUrls.delete(id); }
+  }
+  _vaultUrlIds.clear();
+  if(!wasOpen) return;
+  try{ if(vw && vw.houseId && isProtected(vw.houseId)) closeViewer(); }catch(e){}
+  try{ if(an && an.houseId && isProtected(an.houseId)) closeAnnotate(); }catch(e){}
+  try{ if($mr && $mr.innerHTML) closeSheet(); }catch(e){}
+  if(!silent){ try{ render(); }catch(e){} }
+}
+function vaultTouch(){
+  if(!_vaultKey) return;
+  clearTimeout(_vaultIdleTimer);
+  _vaultIdleTimer=setTimeout(()=>{ vaultRelock(); toast('Protected projects locked'); }, VAULT_IDLE_MS);
+}
+
+/* ============================================================
+   THE photo choke point — decoy-proof rule, one place only.
+   Every enumeration of photo ids in this app goes through these.
+   scopeHouseId is the project whose OWN screen is being painted; pass null
+   for any cross-project surface (project list, pickers, search, exports).
+   ============================================================ */
+function photoAllowedFor(houseId, scopeHouseId){
+  const h=houseById(houseId);
+  if(!h || !h.protected) return true;         /* not protected: unchanged, zero cost */
+  if(scopeHouseId !== houseId) return false;  /* never outside its own project. ever. */
+  return vaultUnlocked();
+}
+function photosFor(houseId, scopeHouseId){
+  const h=houseById(houseId); if(!h) return [];
+  return photoAllowedFor(houseId, scopeHouseId) ? (h.photos||[]) : [];
+}
+function coverFor(houseId, scopeHouseId){
+  const h=houseById(houseId); if(!h || !h.cover) return null;
+  return photoAllowedFor(houseId, scopeHouseId) ? h.cover : null;
+}
+
+/* The ONE photo write path: encrypts iff the project is protected. */
+async function photoPutFor(houseId, rec){
+  const stale=_objUrls.get(rec.id);
+  if(stale){ URL.revokeObjectURL(stale); _objUrls.delete(rec.id); _vaultUrlIds.delete(rec.id); }
+  const h=houseById(houseId);
+  if(h && h.protected){
+    if(!vaultUnlocked()) throw new Error('vault locked');
+    const sealed=await vaultSealBytes(new Uint8Array(await rec.blob.arrayBuffer()));
+    const out={ id:rec.id, enc:1, iv:sealed.iv, ct:sealed.ct,
+                type:(rec.blob.type||'image/jpeg'),
+                houseId:rec.houseId, createdAt:rec.createdAt };
+    if(rec.cropped) out.cropped=true;
+    return photoPut(out);
+  }
+  return photoPut(rec);
+}
+
 async function photoURL(id){
   if(_objUrls.has(id)) return _objUrls.get(id);
   const rec=await photoGet(id); if(!rec) return '';
-  const u=URL.createObjectURL(rec.blob); _objUrls.set(id,u); return u;
+  let blob=rec.blob;
+  if(isEncPhoto(rec)){
+    if(!_vaultKey) return '';                 /* locked: no pixels reach the screen */
+    try{
+      const pt=await vaultOpenBytes(rec.iv, rec.ct);
+      blob=new Blob([pt],{type:rec.type||'image/jpeg'});
+    }catch(e){ return ''; }
+    _vaultUrlIds.add(id);
+  }
+  if(!blob) return '';
+  const u=URL.createObjectURL(blob); _objUrls.set(id,u); return u;
 }
 
 /* ---------- helpers ---------- */
@@ -656,13 +891,20 @@ function autosaveOpenNote(){
   const houseSel=$app.querySelector('#note-house'); const houseId=houseSel?houseSel.value||null:null;
   const impEl=$app.querySelector('#note-important'); const important=impEl?impEl.checked:false;
   if(!title && !body.trim()) return;               // nothing worth saving
+  /* VAULT_TOGGLE — into a protected project, seal before persisting. This runs
+     synchronously from render(), so the write is deferred to the seal's promise
+     rather than being made async: a crash mid-edit loses the edit, never leaks it. */
+  const saveNoteRec=(n)=>{
+    if(isProtected(n.houseId)) vaultAlignRecord(n,['title','body'],n.houseId).then(ok=>{ if(ok) persist.notes(); });
+    else persist.notes();
+  };
   if(id==='new'){
     // promote the new note to a saved one so we don't duplicate on next autosave
     const nn={id:uid(),title,body,houseId,important,createdAt:now(),updatedAt:now()};
-    notes.push(nn); _lastAutosavedNewId=nn.id; persist.notes();
+    notes.push(nn); _lastAutosavedNewId=nn.id; saveNoteRec(nn);
   } else {
     const n=notes.find(x=>x.id===id);
-    if(n){ n.title=title; n.body=body; n.houseId=houseId; n.important=important; n.updatedAt=now(); persist.notes(); }
+    if(n){ n.title=title; n.body=body; n.houseId=houseId; n.important=important; n.updatedAt=now(); saveNoteRec(n); }
   }
 }
 let _lastAutosavedNewId=null;
@@ -702,7 +944,8 @@ function renderFab(){
    ============================================================ */
 function renderToday(){
   const order={doing:0,todo:1,done:2};
-  const list=[...tasks].sort((a,b)=> (order[a.status]-order[b.status]) || (b.createdAt-a.createdAt));
+  /* VAULT_RENDER — a protected project's to-dos live only inside that project. */
+  const list=tasks.filter(t=>!isProtected(t.houseId)).sort((a,b)=> (order[a.status]-order[b.status]) || (b.createdAt-a.createdAt));
   const doing=list.filter(t=>t.status==='doing'), todo=list.filter(t=>t.status==='todo'), done=list.filter(t=>t.status==='done');
   const d=new Date();
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(d.toLocaleDateString(undefined,{weekday:'long'}))} · ${esc(d.toLocaleDateString(undefined,{month:'long',day:'numeric'}))}</span><h1>To Do</h1></div>
@@ -718,7 +961,7 @@ function taskRow(t){
   return `<div class="card task ${t.status==='done'?'is-done':''}" style="margin-bottom:8px">
     <button class="punch ${t.status}" data-punch="${t.id}" aria-label="${STATUS_LABEL[t.status]} — tap to advance">${icon}</button>
     <div class="body" data-edit-task="${t.id}">
-      <div class="ttext">${esc(t.text)}</div>
+      <div class="ttext">${esc(vt(t.text))}</div>
       <div class="meta">${h?`<span class="h-tag">${esc(h.name)}</span>`:''}<span>${STATUS_LABEL[t.status]}</span></div>
     </div>
   </div>`;
@@ -742,10 +985,19 @@ function renderHouses(){
   </div>`;
   const filtered=categoryFilter==='all'?houses:(categoryFilter==='__none__'?houses.filter(h=>!categoryById(h.category)):houses.filter(h=>h.category===categoryFilter));
   const cards=filtered.length?sortHousesList(filtered).map(h=>{
+    /* VAULT_RENDER — this list is a cross-project view, so a protected project
+       shows its name and nothing else: no cover, no address, no status, no
+       counts. How much is in there is itself information. */
+    if(h.protected) return `<div class="card house-card" data-house="${h.id}">
+      <div class="hc-body" style="padding:17px 14px"><div class="row">
+        <div class="grow"><div class="hc-name">${esc(h.name)}</div></div>
+        <span class="lock-chip">${I.lock} Protected</span>
+      </div></div></div>`;
     const open=tasks.filter(t=>t.houseId===h.id&&t.status!=='done').length;
     const jt=h.jobType&&JOB_TYPE_LABEL[h.jobType]?JOB_TYPE_LABEL[h.jobType]:'';
+    const cov=coverFor(h.id,null);
     return `<div class="card house-card" data-house="${h.id}">
-      <div class="house-cover" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
+      <div class="house-cover" ${cov?`data-cover="${cov}"`:''}>${cov?'':`<div class="blueprint"></div>${I.house}`}</div>
       <div class="hc-body"><div class="row"><div class="grow"><div class="hc-name">${esc(h.name)}</div>${h.address?`<div class="hc-addr truncate">${esc(h.address)}</div>`:''}</div>
         <span class="cat-badge" title="${esc(categoryLabel(h.category))}">${categoryIcon(h.category)}</span>
         <span class="chip status-${h.status}">${esc(h.status)}</span></div>
@@ -755,20 +1007,47 @@ function renderHouses(){
   return head+`<div class="wrap">${filterChips}${cards}</div>`;
 }
 
+/* VAULT_RENDER — a locked project. The name, a lock, a way in, and the one
+   honest way out if the passphrase is gone. Nothing else is even built. */
+function renderHouseLocked(h){
+  const items=(h.specs||[]).length+(h.photos||[]).length
+    +notes.filter(n=>n.houseId===h.id).length+tasks.filter(t=>t.houseId===h.id).length;
+  return `<div class="topbar">
+    <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
+    <div class="grow"><span class="eyebrow">Protected</span><h1 class="truncate">${esc(h.name)}</h1></div>
+  </div>
+  <div class="wrap">
+    <div style="text-align:center;padding:50px 20px 28px">
+      <span class="lock-hero">${I.lock}</span>
+      <div style="font-family:var(--serif);font-size:19px;margin-top:12px">${esc(h.name)} is locked</div>
+      <div class="muted" style="font-size:13.5px;line-height:1.65;margin-top:8px">Its notes, to-dos, specs and photos are encrypted on this device. Nothing here is readable — not by this app, not by anyone — without your vault passphrase.</div>
+    </div>
+    <button class="btn primary block" data-vault-open="${h.id}">${I.lock} Unlock</button>
+
+    <div class="sec-head" style="margin-top:28px"><span class="label">Lost the passphrase?</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13px;line-height:1.65">There is no recovery — that is the design, not an oversight. EGS cannot reset it, and neither can anyone else. If the passphrase is gone, the only thing left to do with this project is delete it.</div>
+    <button class="btn danger block" data-vault-del="${h.id}" style="margin-top:8px">${I.trash} Delete this project (${items} item${items===1?'':'s'})</button>
+  </div>`;
+}
+
 function renderHouse(id){
   const h=houseById(id); if(!h) return renderHouses();
+  if(h.protected && !vaultUnlocked()) return renderHouseLocked(h);
+  vaultEnsureProject(id);
   const specsByCat={};
   (h.specs||[]).forEach(s=>{ (specsByCat[s.category]=specsByCat[s.category]||[]).push(s); });
   const specBlocks=SPEC_CATS.filter(c=>specsByCat[c]).map(c=>`
     <div class="sec-head"><span class="label">${c}</span><span class="rule"></span></div>
-    <div class="card spec-cat">${specsByCat[c].map(s=>`
+    <div class="card spec-cat">${specsByCat[c].map(s=>{
+      const sRoom=vt(s.room), sLabel=vt(s.label), sVal=vt(s.value), sNote=vt(s.note);
+      return `
       <div class="spec-row">
-        ${s.room?`<div class="spec-room">${esc(s.room)}</div>`:'<div class="spec-room faint">—</div>'}
-        <div class="spec-main"><div class="spec-label">${esc(s.label)}</div>${s.value?`<div class="spec-val">${esc(s.value)}</div>`:''}${s.note?`<div class="spec-note">${esc(s.note)}</div>`:''}</div>
+        ${sRoom?`<div class="spec-room">${esc(sRoom)}</div>`:'<div class="spec-room faint">—</div>'}
+        <div class="spec-main"><div class="spec-label">${esc(sLabel)}</div>${sVal?`<div class="spec-val">${esc(sVal)}</div>`:''}${sNote?`<div class="spec-note">${esc(sNote)}</div>`:''}</div>
         <button class="icon-btn" style="width:34px;height:34px;background:none" data-del-spec="${s.id}" aria-label="Delete spec">${I.trash}</button>
-      </div>`).join('')}</div>`).join('');
+      </div>`;}).join('')}</div>`).join('');
 
-  const photos=(h.photos||[]);
+  const photos=photosFor(id,id);
   const photoGrid=`<div class="sec-head"><span class="label">Photos</span><span class="rule"></span><span class="count">${photos.length}</span></div>
     <div class="photo-grid">
       <label class="photo-add" aria-label="Take photo">${I.camera}<span>Camera</span><input type="file" accept="image/*" capture="environment" hidden data-add-photo></label>
@@ -786,15 +1065,18 @@ function renderHouse(id){
     ${houseNotes.length?houseNotes.map(noteCardHtml).join(''):'<div class="card muted" style="text-align:center;padding:18px">No notes for this project yet.</div>'}
     <button class="btn block sm" data-add-note-house="${h.id}" style="margin-top:4px">${I.plus} Add note</button>`;
 
+  const cover=coverFor(id,id);
+  const addr=vt(h.address);
+  const siteNotes=vt(h.notes);
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
-    <div class="grow"><span class="eyebrow">Project</span><h1 class="truncate">${esc(h.name)}</h1></div>
-    <button class="icon-btn" data-share-house="${h.id}" aria-label="Share project">${I.share}</button>
+    <div class="grow"><span class="eyebrow">${h.protected?'Protected · unlocked':'Project'}</span><h1 class="truncate">${esc(h.name)}</h1></div>
+    ${h.protected?`<button class="icon-btn" data-vault-lock-now aria-label="Lock this project now">${I.lock}</button>`:`<button class="icon-btn" data-share-house="${h.id}" aria-label="Share project">${I.share}</button>`}
     <button class="icon-btn" data-edit-house="${h.id}" aria-label="Edit project">${I.edit}</button>
   </div>
   <div class="wrap">
-    <div class="house-cover" data-edit-cover="${h.id}" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px;cursor:pointer" ${h.cover?`data-cover="${h.cover}"`:''}>${h.cover?'':`<div class="blueprint"></div>${I.house}`}</div>
-    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${h.id}" style="cursor:pointer" title="Tap to move to another category">${categoryIcon(h.category)}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${h.address?`<span class="muted truncate" style="font-size:13px">${esc(h.address)}</span>`:''}</div>
+    <div class="house-cover" data-edit-cover="${h.id}" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px;cursor:pointer" ${cover?`data-cover="${cover}"`:''}>${cover?'':`<div class="blueprint"></div>${I.house}`}</div>
+    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${h.id}" style="cursor:pointer" title="Tap to move to another category">${categoryIcon(h.category)}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${addr?`<span class="muted truncate" style="font-size:13px">${esc(addr)}</span>`:''}</div>
 
     ${specBlocks||''}
     <button class="btn block sm" data-add-spec style="margin:2px 0 4px">${I.plus} Add spec (paint, flooring, trim…)</button>
@@ -802,7 +1084,7 @@ function renderHouse(id){
     ${photoGrid}
 
     <div class="sec-head" data-open-house-notes="${h.id}" style="cursor:pointer"><span class="label">Site Notes</span><span class="rule"></span><span class="chev">${I.chevronR}</span></div>
-    <div class="card" data-open-house-notes="${h.id}" style="cursor:pointer">${h.notes?`<div style="white-space:pre-wrap;color:var(--paper-dim);font-size:14px;max-height:3.6em;overflow:hidden">${esc(h.notes.slice(0,180))}${h.notes.length>180?'…':''}</div>`:`<div class="muted" style="font-size:14px">Tap to add site notes, measurements, reminders…</div>`}</div>
+    <div class="card" data-open-house-notes="${h.id}" style="cursor:pointer">${siteNotes?`<div style="white-space:pre-wrap;color:var(--paper-dim);font-size:14px;max-height:3.6em;overflow:hidden">${esc(siteNotes.slice(0,180))}${siteNotes.length>180?'…':''}</div>`:`<div class="muted" style="font-size:14px">Tap to add site notes, measurements, reminders…</div>`}</div>
 
     ${notebookBlock}
 
@@ -815,12 +1097,14 @@ function renderHouse(id){
    ============================================================ */
 function renderHouseNotes(houseId){
   const h=houseById(houseId); if(!h) return renderHouses();
+  if(h.protected && !vaultUnlocked()) return renderHouseLocked(h);
+  vaultEnsureProject(houseId);
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
     <div class="grow"><span class="eyebrow truncate">${esc(h.name)}</span><h1>Notes</h1></div>
   </div>
   <div class="wrap">
-    <textarea class="input" data-house-notes-full="${h.id}" placeholder="Site notes, measurements, reminders…" style="min-height:calc(100vh - 170px);font-size:15px;line-height:1.5">${esc(h.notes||'')}</textarea>
+    <textarea class="input" data-house-notes-full="${h.id}" placeholder="Site notes, measurements, reminders…" style="min-height:calc(100vh - 170px);font-size:15px;line-height:1.5">${esc(vt(h.notes))}</textarea>
   </div>`;
 }
 
@@ -829,9 +1113,9 @@ function renderHouseNotes(houseId){
    ============================================================ */
 function noteCardHtml(n){
   const h=n.houseId?houseById(n.houseId):null;
-  const body=(n.body||'').replace(/\s+/g,' ').trim();
+  const body=vt(n.body).replace(/\s+/g,' ').trim();
   return `<div class="card" data-note="${n.id}">
-    <div class="row"><div class="grow"><div style="font-family:var(--serif);font-size:17px">${n.important?`<span class="note-star" style="color:var(--brass)">${I.star}</span> `:''}${esc(n.title||'Untitled')}</div>
+    <div class="row"><div class="grow"><div style="font-family:var(--serif);font-size:17px">${n.important?`<span class="note-star" style="color:var(--brass)">${I.star}</span> `:''}${esc(vt(n.title)||'Untitled')}</div>
     ${body?`<div class="muted truncate" style="font-size:13px;margin-top:2px">${esc(body)}</div>`:''}</div></div>
     <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${relDate(n.updatedAt)}${h?` · <span style="color:var(--brass)">${esc(h.name)}</span>`:''}</div>
   </div>`;
@@ -840,8 +1124,10 @@ function noteCardHtml(n){
 function renderNotes(){
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Notebook</span><h1>Notes</h1></div>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
-  if(!notes.length) return head+`<div class="empty">${I.note}<div class="t">No notes yet</div><div>Keep anything that doesn't belong to a single project — ideas, supplier info, measurements.</div></div>`;
-  const sorted=[...notes].sort((a,b)=>b.updatedAt-a.updatedAt);
+  /* VAULT_RENDER — a protected project's notes live only inside that project. */
+  const visible=notes.filter(n=>!isProtected(n.houseId));
+  if(!visible.length) return head+`<div class="empty">${I.note}<div class="t">No notes yet</div><div>Keep anything that doesn't belong to a single project — ideas, supplier info, measurements.</div></div>`;
+  const sorted=[...visible].sort((a,b)=>b.updatedAt-a.updatedAt);
   const important=sorted.filter(n=>n.important);
   const rest=sorted.filter(n=>!n.important);
   const impBlock=important.length?`<div class="sec-head"><span class="label" style="color:var(--brass)">Important</span><span class="rule"></span><span class="count">${important.length}</span></div>${important.map(noteCardHtml).join('')}`:'';
@@ -852,16 +1138,18 @@ function renderNote(id){
   const isNew=id==='new';
   const presetHouseId=pendingNoteHouseId; pendingNoteHouseId=null;
   const n=isNew?{title:'',body:'',houseId:presetHouseId,important:false}:notes.find(x=>x.id===id)||{title:'',body:'',houseId:null,important:false};
-  const opts=houses.map(h=>`<option value="${h.id}" ${n.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  if(isProtected(n.houseId) && !vaultUnlocked()) return renderHouseLocked(houseById(n.houseId));
+  vaultEnsureProject(n.houseId);
+  const opts=pickableHouses(n.houseId).map(h=>`<option value="${h.id}" ${n.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   return `<div class="topbar">
     <button class="icon-btn" data-back aria-label="Back">${I.back}</button>
     <div class="grow"><span class="eyebrow">${isNew?'New note':'Note'}</span><h1>Note</h1></div>
     <button class="btn sm primary" data-save-note="${isNew?'new':n.id}">Save</button>
   </div>
   <div class="wrap">
-    <div class="field"><input class="input" id="note-title" placeholder="Title" value="${esc(n.title)}" style="font-family:var(--serif);font-size:19px"></div>
+    <div class="field"><input class="input" id="note-title" placeholder="Title" value="${esc(vt(n.title))}" style="font-family:var(--serif);font-size:19px"></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;font-size:12.5px;color:var(--brass)"><input type="checkbox" id="note-important" ${n.important?'checked':''} style="width:22px;height:22px;accent-color:var(--brass)"> Mark as Important</label></div>
-    <div class="field"><textarea class="input" id="note-body" placeholder="Write…" style="min-height:220px">${esc(n.body)}</textarea></div>
+    <div class="field"><textarea class="input" id="note-body" placeholder="Write…" style="min-height:220px">${esc(vt(n.body))}</textarea></div>
     <div class="field"><label>Link to project</label>
       <select class="input" id="note-house"><option value="">— none —</option>${opts}</select></div>
     ${isNew?'':`<button class="btn danger block" data-del-note="${n.id}">${I.trash} Delete note</button>`}
@@ -881,10 +1169,15 @@ function runSearch(q){
   const res=document.getElementById('results'); q=q.trim().toLowerCase();
   if(!q){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">Type to search everything on this device.</div>`; return; }
   const hits=[];
-  houses.forEach(h=>{ const hay=[h.name,h.address,h.notes,...(h.specs||[]).flatMap(s=>[s.label,s.value,s.room,s.note])].join(' ').toLowerCase();
+  /* VAULT_RENDER — protected projects are not searchable, locked or unlocked.
+     Contents live inside the project or nowhere. Same rule as photos. */
+  houses.forEach(h=>{ if(h.protected) return;
+    const hay=[h.name,h.address,h.notes,...(h.specs||[]).flatMap(s=>[s.label,s.value,s.room,s.note])].join(' ').toLowerCase();
     if(hay.includes(q)) hits.push({t:'Project',title:h.name,sub:h.address||'',go:()=>go('house',h.id)}); });
-  notes.forEach(n=>{ if((n.title+' '+n.body).toLowerCase().includes(q)) hits.push({t:'Note',title:n.title||'Untitled',sub:(n.body||'').slice(0,60),go:()=>go('note',n.id)}); });
-  tasks.forEach(t=>{ if((t.text||'').toLowerCase().includes(q)){ const h=houseById(t.houseId); hits.push({t:'To-do',title:t.text,sub:(h?h.name+' · ':'')+STATUS_LABEL[t.status],go:()=> h?go('house',h.id):go('todo')}); } });
+  notes.forEach(n=>{ if(isProtected(n.houseId)) return;
+    if((n.title+' '+n.body).toLowerCase().includes(q)) hits.push({t:'Note',title:n.title||'Untitled',sub:(n.body||'').slice(0,60),go:()=>go('note',n.id)}); });
+  tasks.forEach(t=>{ if(isProtected(t.houseId)) return;
+    if((t.text||'').toLowerCase().includes(q)){ const h=houseById(t.houseId); hits.push({t:'To-do',title:t.text,sub:(h?h.name+' · ':'')+STATUS_LABEL[t.status],go:()=> h?go('house',h.id):go('todo')}); } });
   if(!hits.length){ res.innerHTML=`<div class="empty faint" style="padding-top:30px">No matches for "${esc(q)}".</div>`; return; }
   res.innerHTML=hits.map((x,i)=>`<div class="card" data-hit="${i}"><div class="meta mono" style="color:var(--brass);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase">${x.t}</div>
     <div style="margin-top:3px">${esc(x.title)}</div>${x.sub?`<div class="muted truncate" style="font-size:13px">${esc(x.sub)}</div>`:''}</div>`).join('');
@@ -1139,6 +1432,15 @@ function renderSettings(){
       <button class="btn sm" data-pin>${locked?'Change':'Set PIN'}</button></div>
     ${locked?`<button class="btn danger block sm" data-pin-off style="margin-top:-4px">Turn off app lock</button>`:''}
 
+    <div class="sec-head"><span class="label">Protected projects</span><span class="rule"></span></div>
+    <div class="card row"><div class="grow"><div>Vault</div><div class="muted" style="font-size:13px">${esc(vaultStatusLine())}</div></div>
+      ${vaultUnlocked()?`<button class="btn sm" data-vault-lock>Lock now</button>`:''}</div>
+    <div class="card muted" style="font-size:12.5px;line-height:1.6;margin-top:-4px">${
+      protectedCount()
+        ? `${protectedCount()} project${protectedCount()===1?'':'s'} protected. Turn protection on or off from a project's Edit screen.`
+        : `Open a project, tap Edit, and switch on <b style="color:var(--paper)">Protect this project</b> to put its notes, to-dos, specs and photos behind a passphrase of their own.`
+    }</div>
+
     <div class="sec-head"><span class="label">Support &amp; Backup</span><span class="rule"></span></div>
     <div class="card row" data-go="support" style="cursor:pointer"><div class="grow"><div>Support &amp; Backup</div><div class="muted" style="font-size:13px">Export/restore your data, and support EGS.</div></div><span class="chev">${I.chevronR}</span></div>
 
@@ -1168,15 +1470,23 @@ function sheet(html){
   $mr.querySelector('[data-scrim]').addEventListener('click',e=>{ if(e.target.hasAttribute('data-scrim')) closeSheet(); });
 }
 
+/* VAULT_RENDER — a cross-project picker never offers a protected project.
+   The only exception is the one an item already belongs to, so editing an item
+   from inside an unlocked protected project still shows where it lives. */
+function pickableHouses(currentId){ return houses.filter(h=>!h.protected || h.id===currentId); }
+
 function openTaskSheet(houseId=null){
-  const opts=houses.map(h=>`<option value="${h.id}" ${houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  const opts=pickableHouses(houseId).map(h=>`<option value="${h.id}" ${houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   sheet(`<h2>New to-do</h2>
     <div class="field"><input class="input" id="t-text" placeholder="What needs doing?" autofocus></div>
     <div class="field"><label>Project (optional)</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
     <button class="btn primary block" id="t-save">Add to today</button>`);
   const inp=$mr.querySelector('#t-text'); setTimeout(()=>inp.focus(),50);
-  const submit=()=>{ const text=inp.value.trim(); if(!text){inp.focus();return;}
-    tasks.push({id:uid(),text,status:'todo',houseId:$mr.querySelector('#t-house').value||null,createdAt:now(),updatedAt:now(),doneAt:null,dueDate:null});
+  const submit=async()=>{ const text=inp.value.trim(); if(!text){inp.focus();return;}
+    const hid=$mr.querySelector('#t-house').value||null;
+    const nt={id:uid(),text,status:'todo',houseId:hid,createdAt:now(),updatedAt:now(),doneAt:null,dueDate:null};
+    tasks.push(nt);
+    if(!(await vaultAlignRecord(nt,['text'],hid))){ tasks.pop(); toast('Unlock the vault to add that'); return; }
     persist.tasks(); closeSheet(); render(); toast('Added to Today'); };
   $mr.querySelector('#t-save').onclick=submit;
   inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
@@ -1193,6 +1503,9 @@ function openSortSheet(){
 
 function openShareSheet(houseId){
   const h=houseById(houseId); if(!h)return;
+  /* VAULT_RENDER — sharing a protected project would hand its contents to
+     whatever app the share sheet points at. Not offered, at all. */
+  if(h.protected){ toast('Protected projects cannot be shared'); return; }
   sheet(`<h2>Share "${esc(h.name)}"</h2>
     <div class="muted" style="font-size:13px;margin-bottom:14px">Creates a file another Notebuilt user can import as a new project. Specs and the project name are always included.</div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-addr" style="width:20px;height:20px;accent-color:var(--brass)"> Address</label></div>
@@ -1209,7 +1522,7 @@ function openShareSheet(houseId){
 }
 
 async function doShareHouse(houseId,opts){
-  const h=houseById(houseId); if(!h)return;
+  const h=houseById(houseId); if(!h || h.protected)return;
   closeSheet();
   toast('Preparing share…');
   try{
@@ -1224,7 +1537,7 @@ async function doShareHouse(houseId,opts){
     }
     if(opts.photos && (h.photos||[]).length){
       const photoData={};
-      for(const pid of h.photos){
+      for(const pid of photosFor(houseId,houseId)){
         const rec=await photoGet(pid);
         if(rec) photoData[pid]={b64:await blobToB64(rec.blob)};
       }
@@ -1256,9 +1569,17 @@ function openHouseSheet(edit=null){
   sheet(`<h2>${edit?'Edit project':'New project'}</h2>
     <div class="field"><label>Category</label><select class="input" id="h-category">${categories.map(c=>`<option value="${c.id}" ${cat===c.id?'selected':''}>${c.icon} ${esc(c.label)}</option>`).join('')}</select></div>
     <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
-    <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(h.address||'')}"></div>
+    <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(vt(h.address))}"></div>
     <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
     <div class="field" id="h-jobtype-field" style="${cat==='construction'?'':'display:none'}"><label>Job type</label><select class="input" id="h-jobtype">${JOB_TYPES.map(j=>`<option value="${j}" ${h.jobType===j?'selected':''}>${JOB_TYPE_LABEL[j]}</option>`).join('')}</select></div>
+    ${edit?`<div class="card" style="background:var(--ink-2);margin:4px 0 14px">
+      <div class="row"><div class="grow">
+        <div>${edit.protected?'Protected':'Protect this project'}</div>
+        <div class="muted" style="font-size:12.5px;line-height:1.5;margin-top:2px">${edit.protected
+          ? 'Its contents are encrypted behind your vault passphrase.'
+          : 'Encrypt its notes, to-dos, specs and photos behind a passphrase of their own.'}</div>
+      </div><button class="btn sm ${edit.protected?'':'primary'}" id="h-protect">${edit.protected?'Turn off':'Turn on'}</button></div>
+    </div>`:''}
     <button class="btn primary block" id="h-save">${edit?'Save':'Create project'}</button>
     ${edit?`<button class="btn danger block" id="h-del" style="margin-top:10px">${I.trash} Delete project</button>`:''}`);
   setTimeout(()=>$mr.querySelector('#h-name').focus(),50);
@@ -1266,15 +1587,25 @@ function openHouseSheet(edit=null){
     const show=$mr.querySelector('#h-category').value==='construction';
     $mr.querySelector('#h-jobtype-field').style.display=show?'':'none';
   };
-  $mr.querySelector('#h-save').onclick=()=>{
+  if(edit) $mr.querySelector('#h-protect').onclick=()=>{
+    closeSheet();
+    if(edit.protected) vaultProtectOff(edit.id); else vaultProtectOn(edit.id);
+  };
+  $mr.querySelector('#h-save').onclick=async()=>{
     const name=$mr.querySelector('#h-name').value.trim(); if(!name){$mr.querySelector('#h-name').focus();return;}
     const category=$mr.querySelector('#h-category').value;
     const addr=$mr.querySelector('#h-addr').value.trim(), st=$mr.querySelector('#h-status').value, jt=$mr.querySelector('#h-jobtype').value;
-    if(edit){ edit.name=name; edit.category=category; edit.address=addr; edit.status=st; edit.jobType=jt; edit.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Saved'); }
+    if(edit){ edit.name=name; edit.category=category; edit.address=addr; edit.status=st; edit.jobType=jt; edit.updatedAt=now();
+      /* VAULT_TOGGLE — seal before it reaches storage, never after. */
+      if(!(await vaultAlignRecord(edit,['address'],edit.id))){ toast('Unlock the vault to save that'); return; }
+      persist.houses(); closeSheet(); render(); toast('Saved'); }
     else{ const nh={id:uid(),name,category,address:addr,status:st,jobType:jt,specs:[],photos:[],cover:null,notes:'',createdAt:now(),updatedAt:now()};
       houses.push(nh); persist.houses(); closeSheet(); go('house',nh.id); toast('Project added'); }
   };
   if(edit) $mr.querySelector('#h-del').onclick=()=>{
+    /* A protected project's notes and to-dos are unreadable ciphertext — unlinking
+       them would strand it. Route to the escape hatch, which deletes them. */
+    if(edit.protected){ closeSheet(); vaultDeleteLocked(edit.id); return; }
     if(!confirm(`Delete "${edit.name}" and its specs? Photos and to-dos for it stay but unlink.`)) return;
     (edit.photos||[]).forEach(pid=>photoDel(pid).catch(()=>{}));
     houses=houses.filter(x=>x.id!==edit.id);
@@ -1364,11 +1695,13 @@ function openSpecSheet(houseId){
     <div class="field"><label>Note (optional)</label><input class="input" id="s-note" placeholder="2 coats, eggshell…"></div>
     <button class="btn primary block" id="s-save">Add spec</button>`);
   setTimeout(()=>$mr.querySelector('#s-label').focus(),50);
-  $mr.querySelector('#s-save').onclick=()=>{
+  $mr.querySelector('#s-save').onclick=async()=>{
     const label=$mr.querySelector('#s-label').value.trim(); if(!label){$mr.querySelector('#s-label').focus();return;}
     h.specs=h.specs||[];
-    h.specs.push({id:uid(),category:$mr.querySelector('#s-cat').value,room:$mr.querySelector('#s-room').value.trim(),
-      label,value:$mr.querySelector('#s-val').value.trim(),note:$mr.querySelector('#s-note').value.trim(),createdAt:now()});
+    const ns={id:uid(),category:$mr.querySelector('#s-cat').value,room:$mr.querySelector('#s-room').value.trim(),
+      label,value:$mr.querySelector('#s-val').value.trim(),note:$mr.querySelector('#s-note').value.trim(),createdAt:now()};
+    h.specs.push(ns);
+    if(!(await vaultAlignRecord(ns,['room','label','value','note'],h.id))){ h.specs.pop(); toast('Unlock the vault to add that'); return; }
     h.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Spec added');
   };
 }
@@ -1390,6 +1723,13 @@ function bind(){
 
   /* Houses */
   $app.querySelectorAll('[data-house]').forEach(c=>c.onclick=()=>go('house',c.dataset.house));
+  $app.querySelectorAll('[data-vault-open]').forEach(b=>b.onclick=()=>vaultUnlockSheet({
+    title:'Unlock this project',
+    body:'Enter your vault passphrase. This is not your app PIN, and there is no way to recover it.'
+  }));
+  const vLockNow=$app.querySelector('[data-vault-lock-now]');
+  if(vLockNow) vLockNow.onclick=()=>{ vaultRelock(); toast('Locked'); };
+  $app.querySelectorAll('[data-vault-del]').forEach(b=>b.onclick=()=>vaultDeleteLocked(b.dataset.vaultDel));
   $app.querySelectorAll('[data-edit-house]').forEach(b=>b.onclick=()=>openHouseSheet(houseById(b.dataset.editHouse)));
   $app.querySelectorAll('[data-share-house]').forEach(b=>b.onclick=()=>openShareSheet(b.dataset.shareHouse));
   const sortBtn=$app.querySelector('[data-sort-houses]'); if(sortBtn) sortBtn.onclick=openSortSheet;
@@ -1408,7 +1748,12 @@ function bind(){
   const hnFull=$app.querySelector('[data-house-notes-full]');
   if(hnFull){
     const hnId=hnFull.dataset.houseNotesFull;
-    const saveHn=()=>{ const h=houseById(hnId); if(h){ h.notes=hnFull.value; h.updatedAt=now(); persist.houses(); } };
+    /* VAULT_TOGGLE — seal first, persist second. If we die in between, the edit
+       is lost rather than written to disk in the clear. */
+    const saveHn=()=>{ const h=houseById(hnId); if(!h) return;
+      h.notes=hnFull.value; h.updatedAt=now();
+      if(isProtected(hnId)) vaultAlignRecord(h,['notes'],hnId).then(ok=>{ if(ok) persist.houses(); });
+      else persist.houses(); };
     let hnTimer=null;
     hnFull.oninput=()=>{ clearTimeout(hnTimer); hnTimer=setTimeout(saveHn,400); };
     hnFull.onblur=()=>{ clearTimeout(hnTimer); saveHn(); };
@@ -1461,6 +1806,7 @@ function bind(){
   /* Settings */
   const pin=$app.querySelector('[data-pin]'); if(pin) pin.onclick=()=>setupPin();
   const pinOff=$app.querySelector('[data-pin-off]'); if(pinOff) pinOff.onclick=()=>{ if(confirm('Turn off the app lock?')){ settings.pinHash=null; settings.pinSalt=null; persist.settings(); render(); toast('App lock off'); } };
+  const vLock=$app.querySelector('[data-vault-lock]'); if(vLock) vLock.onclick=()=>{ vaultRelock(); toast('Protected projects locked'); };
   const exp=$app.querySelector('[data-export]'); if(exp) exp.onclick=exportData;
   const imp=$app.querySelector('[data-import]'); if(imp) imp.onchange=importData;
   const impProj=$app.querySelector('[data-import-project]'); if(impProj) impProj.onchange=importSharedProject;
@@ -1560,7 +1906,7 @@ function bindCopyButtons(scope){
    a new app. Everything in egsSupportCoreHtml() below is meant
    to be copied verbatim, unedited, into every EGS app.
    ============================================================ */
-const APP_BACKUP_DESC = "Save your projects, photos, notes and to-dos to a file. Keep it safe \u2014 you can restore it anytime, even on a new phone or after reinstalling.";
+const APP_BACKUP_DESC = "Save your projects, photos, notes and to-dos to a file. Keep it safe \u2014 you can restore it anytime, even on a new phone or after reinstalling.<br><br>Anything in a protected project stays encrypted inside the file, so the backup is safe to store anywhere \u2014 a copy of it gives up nothing without your vault passphrase.";
 const APP_MONETIZATION = {
   model: 'paid', // 'paid' or 'free' \u2014 controls the section label below
   blurb: "Notebuilt is a one-time purchase \u2014 no subscription, no trial that runs out, no features held hostage after 30 days. Pay once and it's yours, priced like a real tool because it's built to save you real time on the job. [Edit this line with your actual price once it's set.]"
@@ -1575,10 +1921,11 @@ function renderSupport(){
   <div class="wrap">
     <div class="sec-head"><span class="label">Back up your data</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_BACKUP_DESC}</div>
-    <div class="row" style="gap:10px;margin:10px 0 22px">
+    <div class="row" style="gap:10px;margin:10px 0 10px">
       <button class="btn primary" style="flex:1" data-export>${I.download} Export</button>
       <label class="btn" style="flex:1;text-align:center;display:flex;align-items:center;justify-content:center;gap:8px">${I.upload} Restore<input type="file" accept="application/json,.json" hidden data-import></label>
     </div>
+    <div class="muted" style="font-size:12.5px;line-height:1.6;margin:0 0 22px">Restoring replaces everything currently in the app. Protected projects come back <b style="color:var(--paper)">locked</b> &mdash; you'll need the passphrase they were made with, and nothing in the file can stand in for it.</div>
 
     <div class="sec-head"><span class="label">Import a shared project</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">Received a project file from another Notebuilt user? Bring it in as a brand-new project — it won't touch anything else already in your app.</div>
@@ -1611,30 +1958,36 @@ function egsSupportCoreHtml(tabs){
 
 function openEditTask(id){
   const t=tasks.find(x=>x.id===id); if(!t)return;
-  const opts=houses.map(h=>`<option value="${h.id}" ${t.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
+  const opts=pickableHouses(t.houseId).map(h=>`<option value="${h.id}" ${t.houseId===h.id?'selected':''}>${esc(h.name)}</option>`).join('');
   sheet(`<h2>Edit to-do</h2>
-    <div class="field"><input class="input" id="t-text" value="${esc(t.text)}"></div>
+    <div class="field"><input class="input" id="t-text" value="${esc(vt(t.text))}"></div>
     <div class="field"><label>Project</label><select class="input" id="t-house"><option value="">— none —</option>${opts}</select></div>
     <div class="field"><label>Status</label><select class="input" id="t-status">${Object.keys(STATUS_LABEL).map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${STATUS_LABEL[s]}</option>`).join('')}</select></div>
     <button class="btn primary block" id="t-save">Save</button>
     <button class="btn danger block" id="t-del" style="margin-top:10px">${I.trash} Delete</button>`);
-  $mr.querySelector('#t-save').onclick=()=>{
+  $mr.querySelector('#t-save').onclick=async()=>{
     const txt=$mr.querySelector('#t-text').value.trim(); if(!txt)return;
     t.text=txt; t.houseId=$mr.querySelector('#t-house').value||null; t.status=$mr.querySelector('#t-status').value;
-    t.doneAt=t.status==='done'?now():null; t.updatedAt=now(); persist.tasks(); closeSheet(); render();
+    t.doneAt=t.status==='done'?now():null; t.updatedAt=now();
+    if(!(await vaultAlignRecord(t,['text'],t.houseId))){ toast('Unlock the vault to save that'); return; }
+    persist.tasks(); closeSheet(); render();
   };
   $mr.querySelector('#t-del').onclick=()=>{ if(!confirm('Delete this to-do?'))return; tasks=tasks.filter(x=>x.id!==id); persist.tasks(); closeSheet(); render(); toast('Deleted'); };
 }
 
-function doSaveNote(id){
+async function doSaveNote(id){
   const title=$app.querySelector('#note-title').value.trim();
   const body=$app.querySelector('#note-body').value;
   const houseId=$app.querySelector('#note-house').value||null;
   const important=$app.querySelector('#note-important').checked;
   if(!title && !body.trim()){ go('notes'); return; }
-  if(id==='new'){ notes.push({id:uid(),title,body,houseId,important,createdAt:now(),updatedAt:now()}); }
-  else{ const n=notes.find(x=>x.id===id); if(n){ n.title=title; n.body=body; n.houseId=houseId; n.important=important; n.updatedAt=now(); } }
-  persist.notes(); go('notes'); toast('Saved');
+  let rec;
+  if(id==='new'){ rec={id:uid(),title,body,houseId,important,createdAt:now(),updatedAt:now()}; notes.push(rec); }
+  else{ rec=notes.find(x=>x.id===id); if(rec){ rec.title=title; rec.body=body; rec.houseId=houseId; rec.important=important; rec.updatedAt=now(); } }
+  /* VAULT_TOGGLE — align with wherever it now lives, then write. Moving a note
+     into a protected project seals it; moving one out unseals it. */
+  if(rec && !(await vaultAlignRecord(rec,['title','body'],houseId))){ toast('Unlock the vault to save that'); return; }
+  persist.notes(); go(houseId&&isProtected(houseId)?'house':'notes', houseId&&isProtected(houseId)?houseId:null); toast('Saved');
 }
 
 async function handlePhoto(e,houseId){
@@ -1646,7 +1999,7 @@ async function handlePhoto(e,houseId){
   for(const file of files){
     try{
       const blob=await downscale(file); const id=uid();
-      await photoPut({id,blob,houseId,createdAt:now()});
+      await photoPutFor(houseId,{id,blob,houseId,createdAt:now()});
       h.photos.push(id);
       if(!h.cover) h.cover=id;
       saved++;
@@ -1690,9 +2043,10 @@ const Sorted=(function(){
 /* Cover-photo picker (first feature on the Sorted engine) */
 function openCoverPicker(houseId){
   const h=houseById(houseId); if(!h) return;
-  if(!(h.photos||[]).length){ toast('Add photos to this project first'); return; }
+  const pickable=photosFor(houseId,houseId);
+  if(!pickable.length){ toast('Add photos to this project first'); return; }
   Sorted.pickGrid({
-    items:(h.photos||[]),
+    items:pickable,
     resolve:photoURL,
     current:h.cover,
     title:'Choose a photo to crop',
@@ -1784,7 +2138,7 @@ async function openCropEditor(houseId, photoId){
       ctx.drawImage(im, srcX, srcY, srcSize, srcSize, 0, 0, out, out);
       const blob=await new Promise((res,rej)=>canvas.toBlob(b=>b?res(b):rej(new Error('encode')),'image/jpeg',0.85));
       const h=houseById(houseId); const id=uid();
-      await photoPut({id,blob,houseId,createdAt:now(),cropped:true});
+      await photoPutFor(houseId,{id,blob,houseId,createdAt:now(),cropped:true});
       h.photos=h.photos||[]; h.photos.push(id); h.cover=id; h.updatedAt=now(); persist.houses();
       $mr.innerHTML=''; render(); toast('Cover cropped & set');
     }catch(err){ toast('Could not save crop'); }
@@ -1804,13 +2158,39 @@ function setViewerCover(){
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ _leavingView={name:view.name,param:view.param}; autosaveOpenNote(); } });
 window.addEventListener('pagehide',()=>{ _leavingView={name:view.name,param:view.param}; autosaveOpenNote(); });
 
-/* fill in any cover/photo backgrounds from IndexedDB after render */
+/* VAULT_CORE — the key never survives the app going out of sight. Autosave
+   above runs first, so an open protected note is sealed before we drop the key. */
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden') vaultRelock(true);
+  else if(view.name==='house' && isProtected(view.param)) render();
+});
+window.addEventListener('pagehide',()=>vaultRelock(true));
+['pointerdown','keydown','touchstart'].forEach(ev=>
+  document.addEventListener(ev,()=>{ if(_vaultKey) vaultTouch(); },{passive:true}));
+
+/* VAULT_RENDER — which project owns this photo? Answered from the plaintext
+   photos[] arrays, so it still works with the vault locked. */
+function vaultPhotoPaintable(pid, scopeHouseId){
+  const owner=houses.find(h=>(h.photos||[]).indexOf(pid)>=0);
+  if(!owner) return true;                       /* orphan: nothing protects it */
+  return photoAllowedFor(owner.id, scopeHouseId);
+}
+
+/* fill in any cover/photo backgrounds from IndexedDB after render.
+   The renderers already gate on photoAllowedFor(); this re-derives the answer
+   from the screen we are actually on, so a stray data-cover or data-photo can
+   never paint a protected photo even if a renderer is changed carelessly. */
 async function hydratePhotos(){
+  const scope = view.name==='house' ? view.param : null;
   for(const el of $app.querySelectorAll('[data-cover]')){
-    const u=await photoURL(el.getAttribute('data-cover')); if(u){ el.style.backgroundImage=`url(${u})`; el.innerHTML=''; }
+    const pid=el.getAttribute('data-cover');
+    if(!vaultPhotoPaintable(pid,scope)) continue;
+    const u=await photoURL(pid); if(u){ el.style.backgroundImage=`url(${u})`; el.innerHTML=''; }
   }
   for(const el of $app.querySelectorAll('[data-photo]')){
-    const u=await photoURL(el.getAttribute('data-photo')); if(u) el.style.backgroundImage=`url(${u})`;
+    const pid=el.getAttribute('data-photo');
+    if(!vaultPhotoPaintable(pid,scope)) continue;
+    const u=await photoURL(pid); if(u) el.style.backgroundImage=`url(${u})`;
   }
 }
 
@@ -1823,7 +2203,7 @@ let vw={houseId:null,photos:[],index:0,scale:1,tx:0,ty:0};
 
 function openViewer(houseId,photoId){
   const h=houseById(houseId); if(!h)return;
-  const photos=(h.photos||[]).slice();
+  const photos=photosFor(houseId,houseId).slice();
   const idx=photos.indexOf(photoId);
   vw={houseId,photos,index:idx<0?0:idx,scale:1,tx:0,ty:0};
   document.body.style.overflow='hidden';
@@ -1878,17 +2258,17 @@ async function rotatePhoto(){
   toast('Rotating…');
   try{
     const rec=await photoGet(pid); if(!rec) throw new Error('missing photo');
-    const url=URL.createObjectURL(rec.blob);
+    /* VAULT_TOGGLE — a sealed record has no .blob to read; photoURL() decrypts it. */
+    const url=await photoURL(pid); if(!url) throw new Error('cannot open photo');
     const img=new Image();
     await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=url; });
     const c=document.createElement('canvas'); c.width=img.height; c.height=img.width;
     const ctx=c.getContext('2d');
     ctx.translate(c.width/2,c.height/2); ctx.rotate(Math.PI/2); ctx.drawImage(img,-img.width/2,-img.height/2);
-    URL.revokeObjectURL(url);
     const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',0.9));
     if(!blob) throw new Error('encode failed');
-    await photoPut({id:pid,blob,houseId:rec.houseId,createdAt:rec.createdAt});
-    if(_objUrls.has(pid)){ URL.revokeObjectURL(_objUrls.get(pid)); _objUrls.delete(pid); }
+    /* photoPutFor() revokes and drops the stale object URL for this id. */
+    await photoPutFor(rec.houseId,{id:pid,blob,houseId:rec.houseId,createdAt:rec.createdAt});
     vw.scale=1; vw.tx=0; vw.ty=0;
     const freshUrl=await photoURL(pid);
     const vimg=$viewer.querySelector('#v-img');
@@ -2240,7 +2620,7 @@ async function saveAnnotation(){
     if(!blob) throw new Error('encode failed');
     const h=houseById(an.houseId); if(!h) throw new Error('no house');
     const newId=uid();
-    await photoPut({id:newId,blob,houseId:an.houseId,createdAt:now()});
+    await photoPutFor(an.houseId,{id:newId,blob,houseId:an.houseId,createdAt:now()});
     h.photos=h.photos||[]; h.photos.push(newId);
     if(!h.cover) h.cover=newId;
     h.updatedAt=now(); persist.houses();
@@ -2306,9 +2686,19 @@ async function exportData(){
   toast('Building backup…');
   const photos=await photoAll();
   const photoData={};
-  for(const p of photos){ photoData[p.id]={houseId:p.houseId,createdAt:p.createdAt,b64:await blobToB64(p.blob)}; }
+  for(const p of photos){
+    /* VAULT_BACKUP — a sealed photo is exported exactly as it sits in storage:
+       ciphertext and its IV. The file never holds a readable copy. */
+    if(isEncPhoto(p)) photoData[p.id]={ enc:1, iv:p.iv, type:p.type||'image/jpeg',
+                                        houseId:p.houseId, createdAt:p.createdAt, b64:b64FromBytes(p.ct) };
+    else photoData[p.id]={houseId:p.houseId,createdAt:p.createdAt,b64:await blobToB64(p.blob)};
+  }
   /* CHUNK13_RENAME_BACKUP */
-  const dump={ app:'notebuilt', version:1, exportedAt:now(), houses, tasks, notes, photos:photoData };
+  /* The salt and verifier have to travel with the data, or a restored protected
+     project could never be opened again by anyone. The passphrase itself is not
+     in here and cannot be — nothing derived from it is stored anywhere. */
+  const dump={ app:'notebuilt', version:2, exportedAt:now(), houses, tasks, notes, photos:photoData,
+               vault: settings.vault || null };
   const blob=new Blob([JSON.stringify(dump)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download=`notebuilt-backup-${todayKey()}.json`; a.click();
@@ -2317,17 +2707,26 @@ async function exportData(){
 }
 async function importData(e){
   const file=e.target.files&&e.target.files[0]; if(!file)return;
-  if(!confirm('Restore will REPLACE everything currently in the app with the backup. Continue?')) return;
+  if(!confirm('Restore will REPLACE everything currently in the app with the backup.\n\nThat includes your vault: any protected projects in the backup come back locked, and only the passphrase they were made with will open them.\n\nContinue?')) return;
   try{
     const text=await file.text(); const d=JSON.parse(text);
     if(d.app!=='notebuilt' && d.app!=='punchlist') throw new Error('Not a Notebuilt backup');
     houses=d.houses||[]; tasks=d.tasks||[]; notes=d.notes||[];
-    persist.houses(); persist.tasks(); persist.notes();
+    /* VAULT_BACKUP — the salt and verifier come back with the data, and the key
+       in memory goes: whatever is on screen belongs to the old data set. */
+    vaultRelock(true);
+    settings.vault = d.vault || null;
+    persist.houses(); persist.tasks(); persist.notes(); persist.settings();
     /* photos */
     const existing=await photoAll(); for(const p of existing) await photoDel(p.id).catch(()=>{});
-    _objUrls.clear();
-    for(const [id,p] of Object.entries(d.photos||{})){ await photoPut({id,blob:b64ToBlob(p.b64),houseId:p.houseId,createdAt:p.createdAt}); }
-    go('houses'); toast('Backup restored');
+    _objUrls.clear(); _vaultUrlIds.clear(); _vaultCache.clear();
+    for(const [id,p] of Object.entries(d.photos||{})){
+      if(p.enc===1) await photoPut({id, enc:1, iv:p.iv, ct:bytesFromB64(p.b64).buffer,
+                                    type:p.type||'image/jpeg', houseId:p.houseId, createdAt:p.createdAt});
+      else await photoPut({id,blob:b64ToBlob(p.b64),houseId:p.houseId,createdAt:p.createdAt});
+    }
+    go('houses');
+    toast(houses.some(h=>h.protected)?'Restored — protected projects are locked':'Backup restored');
   }catch(err){ alert('Could not restore: '+err.message); }
 }
 
@@ -2385,6 +2784,390 @@ function setupPin(){
   };
   draw('Choose a 4-digit PIN');
 }
+
+/* ============================================================
+   VAULT_CEREMONY — setup, unlock, and the encrypt/decrypt progress overlay
+   ============================================================ */
+const $vault=document.getElementById('vault');
+function vaultOverlay(html){
+  $vault.classList.remove('hidden');
+  $vault.innerHTML=html;
+  document.body.style.overflow='hidden';
+}
+function vaultCloseOverlay(){
+  $vault.classList.add('hidden'); $vault.innerHTML='';
+  document.body.style.overflow='';
+}
+
+/* ---------- progress overlay (driven by encrypt/decrypt-in-place) ---------- */
+let _vaultBusyEl=null;
+function vaultBusy(title, sub, pct){
+  if(!_vaultBusyEl){
+    _vaultBusyEl=document.createElement('div'); _vaultBusyEl.id='vault-busy';
+    _vaultBusyEl.innerHTML='<div class="vb-t"></div><div class="vb-s"></div><div class="vb-bar"><div class="vb-fill"></div></div>';
+    document.body.appendChild(_vaultBusyEl);
+  }
+  _vaultBusyEl.querySelector('.vb-t').textContent=title||'';
+  _vaultBusyEl.querySelector('.vb-s').textContent=sub||'';
+  const bar=_vaultBusyEl.querySelector('.vb-bar'), fill=_vaultBusyEl.querySelector('.vb-fill');
+  if(pct==null) bar.style.display='none';
+  else { bar.style.display=''; fill.style.width=Math.max(0,Math.min(100,pct))+'%'; }
+  /* Yield so the bar actually paints between records. setTimeout, NOT
+     requestAnimationFrame: rAF does not fire while the app is backgrounded, so
+     an rAF-based yield stalls a whole encrypt/decrypt pass for as long as the
+     app is out of sight. setTimeout keeps firing either way. */
+  return new Promise(r=>setTimeout(r,0));
+}
+function vaultBusyDone(){ if(_vaultBusyEl){ _vaultBusyEl.remove(); _vaultBusyEl=null; } }
+
+/* ---------- the setup ceremony: gates 1-3 ----------
+   Resolves true once settings.vault exists and the key is in memory. */
+function vaultRunCeremony(){
+  return new Promise(resolve=>{
+    const cancel=()=>{ vaultCloseOverlay(); resolve(false); };
+
+    /* Gate 1 — the warning. Verbatim. This is the whole point of the ceremony. */
+    const gate1=()=>{
+      vaultOverlay('<div class="v-steps">Step 1 of 4 &middot; Read this</div>'
+        +'<div class="v-mark">'+I.lock+'</div>'
+        +'<h2>Before you protect anything</h2>'
+        +'<div class="v-copy">This is where you keep your passwords and sensitive data. '
+        +'Keep this passphrase in your mind <b>AND</b> written down in a safe place. '
+        +'Treat it like your passport, like your gold bars.<br><br>'
+        +'There is <b>NO recovery</b>. EGS cannot reset, recover, or bypass this &mdash; '
+        +'not won\'t, <b>CAN\'T</b>.</div>'
+        +'<div class="v-actions">'
+        +'<button class="btn primary block" data-v-next>I understand &mdash; continue</button>'
+        +'<button class="btn block" data-v-cancel>Cancel</button></div>');
+      $vault.querySelector('[data-v-next]').onclick=()=>gate2();
+      $vault.querySelector('[data-v-cancel]').onclick=cancel;
+    };
+
+    /* Gate 2 — the passphrase, twice. */
+    const gate2=(err)=>{
+      vaultOverlay('<div class="v-steps">Step 2 of 4 &middot; Choose a passphrase</div>'
+        +'<h2>Your vault passphrase</h2>'
+        +'<div class="v-copy">Separate from your app PIN, and not stored anywhere. '
+        +'Longer beats clever &mdash; <b>a short sentence beats P@ss1</b>. '
+        +'Minimum '+VAULT_MIN_PASS+' characters.</div>'
+        +'<div class="field"><label>Passphrase</label><input class="input" type="password" id="v-p1" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+        +'<div class="field"><label>Type it again</label><input class="input" type="password" id="v-p2" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+        +'<div class="v-err">'+esc(err||'')+'</div>'
+        +'<div class="v-actions">'
+        +'<button class="btn primary block" data-v-next>Continue</button>'
+        +'<button class="btn block" data-v-cancel>Cancel</button></div>');
+      setTimeout(()=>{ const el=$vault.querySelector('#v-p1'); if(el) el.focus(); },60);
+      $vault.querySelector('[data-v-cancel]').onclick=cancel;
+      $vault.querySelector('[data-v-next]').onclick=()=>{
+        const p1=$vault.querySelector('#v-p1').value, p2=$vault.querySelector('#v-p2').value;
+        if(p1.length<VAULT_MIN_PASS){ gate2('Use at least '+VAULT_MIN_PASS+' characters.'); return; }
+        if(p1!==p2){ gate2('Those two do not match.'); return; }
+        gate3(p1);
+      };
+    };
+
+    /* Gate 3 — the forced acknowledgement. Continue stays dead until it's ticked. */
+    const gate3=(pass)=>{
+      vaultOverlay('<div class="v-steps">Step 3 of 4 &middot; Write it down</div>'
+        +'<h2>Put it somewhere safe</h2>'
+        +'<div class="v-copy">Now, before you go any further. Not in this app &mdash; on paper, '
+        +'or wherever you keep the things you cannot afford to lose.</div>'
+        +'<label class="v-check"><input type="checkbox" id="v-ack"><span>I have written my '
+        +'passphrase down and stored it safely. I understand a lost passphrase means my '
+        +'protected data is gone forever.</span></label>'
+        +'<div class="v-actions">'
+        +'<button class="btn primary block" data-v-next disabled>Continue</button>'
+        +'<button class="btn block" data-v-cancel>Cancel</button></div>');
+      const ack=$vault.querySelector('#v-ack'), next=$vault.querySelector('[data-v-next]');
+      ack.onchange=()=>{ if(ack.checked) next.removeAttribute('disabled'); else next.setAttribute('disabled',''); };
+      $vault.querySelector('[data-v-cancel]').onclick=cancel;
+      next.onclick=()=>{ if(ack.checked) create(pass); };
+    };
+
+    /* Derive the key and store salt + verifier. The passphrase itself is never
+       written down anywhere by us — only the ciphertext of a known string. */
+    const create=async (pass)=>{
+      await vaultBusy('Setting up your vault','Deriving your key — this takes a moment');
+      try{
+        const salt=b64FromBytes(crypto.getRandomValues(new Uint8Array(16)));
+        _vaultKey=await vaultDeriveKey(pass, salt);
+        const verifier=await vaultSealText(VAULT_VERIFIER_TEXT);
+        settings.vault={ salt, verifier, migration:null };
+        persist.settings();
+        vaultTouch();
+        vaultBusyDone(); vaultCloseOverlay(); resolve(true);
+      }catch(e){
+        _vaultKey=null; vaultBusyDone();
+        gate2('Could not set up the vault — try again.');
+      }
+    };
+
+    gate1();
+  });
+}
+
+/* Gate 4 — the project is locked as of right now, and you open it once here
+   before anything can go into it. No skip: proving the passphrase works is the
+   entire reason this gate exists. */
+function vaultVerificationGate(){
+  return new Promise(resolve=>{
+    vaultRelock(true);
+    const draw=(err)=>{
+      vaultOverlay('<div class="v-steps">Step 4 of 4 &middot; Prove it works</div>'
+        +'<div class="v-mark">'+I.lock+'</div>'
+        +'<h2>Unlock it once, now</h2>'
+        +'<div class="v-copy">Your project is locked. Open it with the passphrase you just '
+        +'wrote down &mdash; before you put anything in it. If what you wrote down doesn\'t '
+        +'work, this is the moment to find out.</div>'
+        +'<div class="field"><label>Vault passphrase</label><input class="input" type="password" id="v-vp" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+        +'<div class="v-err">'+esc(err||'')+'</div>'
+        +'<div class="v-actions"><button class="btn primary block" data-v-go>Unlock</button></div>');
+      setTimeout(()=>{ const el=$vault.querySelector('#v-vp'); if(el) el.focus(); },60);
+      const go=async()=>{
+        const btn=$vault.querySelector('[data-v-go]'), inp=$vault.querySelector('#v-vp');
+        const pass=inp.value; if(!pass) return;
+        btn.setAttribute('disabled',''); btn.textContent='Unlocking…';
+        if(await vaultUnlock(pass)){ vaultCloseOverlay(); resolve(true); return; }
+        await new Promise(r=>setTimeout(r,1000));
+        draw('That is not the passphrase. Your data is untouched — try again.');
+      };
+      $vault.querySelector('[data-v-go]').onclick=go;
+      $vault.querySelector('#v-vp').addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+    };
+    draw();
+  });
+}
+
+/* ---------- the everyday unlock ---------- */
+function vaultUnlockSheet(opts){
+  opts=opts||{};
+  const draw=(err)=>{
+    sheet('<h2>'+esc(opts.title||'Unlock protected projects')+'</h2>'
+      +'<div class="muted" style="font-size:13px;margin-bottom:14px">'
+      +esc(opts.body||'Enter your vault passphrase. This is not your app PIN.')+'</div>'
+      +'<div class="field"><input class="input" type="password" id="v-up" placeholder="Vault passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+      +'<div class="v-err">'+esc(err||'')+'</div>'
+      +'<button class="btn primary block" id="v-ugo">Unlock</button>');
+    setTimeout(()=>{ const el=$mr.querySelector('#v-up'); if(el) el.focus(); },60);
+    const go=async()=>{
+      const btn=$mr.querySelector('#v-ugo'), inp=$mr.querySelector('#v-up');
+      const pass=inp.value; if(!pass) return;
+      btn.setAttribute('disabled',''); btn.textContent='Unlocking…';
+      if(await vaultUnlock(pass)){
+        closeSheet();
+        if(opts.onOpen) opts.onOpen(); else render();
+        return;
+      }
+      /* Wrong passphrase costs a deliberate one-second pause. No lockout, no counter. */
+      await new Promise(r=>setTimeout(r,1000));
+      draw('That passphrase did not open the vault.');
+    };
+    $mr.querySelector('#v-ugo').onclick=go;
+    $mr.querySelector('#v-up').addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+  };
+  draw();
+}
+
+function vaultStatusLine(){
+  if(!vaultExists()) return 'Not set up — nothing on this device is encrypted yet.';
+  return vaultUnlocked()
+    ? 'Unlocked. Relocks after 15 minutes idle, or the moment you leave the app.'
+    : 'Locked. Your vault passphrase opens it.';
+}
+function protectedCount(){ return houses.filter(h=>h.protected).length; }
+
+/* ============================================================
+   VAULT_TOGGLE — protect on/off, encrypt-in-place, and the delete escape
+   ============================================================ */
+let _vaultMigrating=false;
+
+/* Bring a record's fields into line with where it now lives: sealed inside a
+   protected project, plain outside one. Handles a note being moved either way. */
+async function vaultAlignRecord(rec, fields, houseId){
+  const want=isProtected(houseId);
+  if(!vaultUnlocked()){
+    /* Nothing to do if it is already in the right shape; otherwise refuse
+       rather than write the wrong thing. */
+    return !fields.some(f=>isEnc(rec[f])!==want);
+  }
+  for(const f of fields){
+    if(want){
+      if(isEnc(rec[f])) continue;
+      const plain=rec[f]==null?'':String(rec[f]);
+      rec[f]=await vaultSealText(plain);
+      _vaultCache.set(rec[f].iv, plain);      /* keep the open screen readable */
+    }else{
+      if(!isEnc(rec[f])) continue;
+      rec[f]=await vaultOpenText(rec[f]);
+    }
+  }
+  return true;
+}
+
+/* One record, one direction. Both vaultSealField and vaultOpenField are no-ops
+   on a record that is already in the target state — that is what makes an
+   interrupted run safe to simply re-run. */
+async function vaultMigrateOne(h, job, seal){
+  const conv = seal ? vaultSealField : vaultOpenField;
+  if(job.kind==='house'){
+    h.address=await conv(h.address); h.notes=await conv(h.notes); persist.houses(); return;
+  }
+  if(job.kind==='spec'){
+    const s=(h.specs||[]).find(x=>x.id===job.id); if(!s) return;
+    s.room=await conv(s.room); s.label=await conv(s.label);
+    s.value=await conv(s.value); s.note=await conv(s.note); persist.houses(); return;
+  }
+  if(job.kind==='note'){
+    const n=notes.find(x=>x.id===job.id); if(!n) return;
+    n.title=await conv(n.title); n.body=await conv(n.body); persist.notes(); return;
+  }
+  if(job.kind==='task'){
+    const t=tasks.find(x=>x.id===job.id); if(!t) return;
+    t.text=await conv(t.text); persist.tasks(); return;
+  }
+  if(job.kind==='photo'){
+    const rec=await photoGet(job.id); if(!rec) return;
+    const stale=_objUrls.get(job.id);
+    if(stale){ URL.revokeObjectURL(stale); _objUrls.delete(job.id); _vaultUrlIds.delete(job.id); }
+    if(seal){
+      if(isEncPhoto(rec)) return;                       /* already sealed — resume skips it */
+      const sealed=await vaultSealBytes(new Uint8Array(await rec.blob.arrayBuffer()));
+      const out={ id:rec.id, enc:1, iv:sealed.iv, ct:sealed.ct,
+                  type:(rec.blob&&rec.blob.type)||'image/jpeg',
+                  houseId:rec.houseId, createdAt:rec.createdAt };
+      if(rec.cropped) out.cropped=true;
+      await photoPut(out);
+    }else{
+      if(!isEncPhoto(rec)) return;                      /* already plain */
+      const pt=await vaultOpenBytes(rec.iv, rec.ct);
+      const out={ id:rec.id, blob:new Blob([pt],{type:rec.type||'image/jpeg'}),
+                  houseId:rec.houseId, createdAt:rec.createdAt };
+      if(rec.cropped) out.cropped=true;
+      await photoPut(out);
+    }
+    return;
+  }
+}
+
+/* The pass itself. Photos go last: they are the slow part, and the text records
+   are cheap enough that the bar moves straight away. */
+async function vaultRunMigration(houseId, dir){
+  if(_vaultMigrating) return false;
+  const h=houseById(houseId); if(!h) return false;
+  if(!vaultUnlocked()) return false;
+  const seal = dir==='on';
+  _vaultMigrating=true;
+  const jobs=[{kind:'house'}];
+  (h.specs||[]).forEach(s=>jobs.push({kind:'spec',id:s.id}));
+  notes.forEach(n=>{ if(n.houseId===houseId) jobs.push({kind:'note',id:n.id}); });
+  tasks.forEach(t=>{ if(t.houseId===houseId) jobs.push({kind:'task',id:t.id}); });
+  (h.photos||[]).forEach(pid=>jobs.push({kind:'photo',id:pid}));
+  const total=jobs.length;
+  const title=seal?('Protecting '+h.name):('Removing protection');
+  const sub=seal?'Encrypting on this device':'Decrypting on this device';
+  try{
+    await vaultBusy(title, sub, 0);
+    for(let i=0;i<jobs.length;i++){
+      await vaultMigrateOne(h, jobs[i], seal);
+      await vaultBusy(title, sub+' — '+(i+1)+' of '+total, Math.round(((i+1)/total)*100));
+    }
+    /* Cleared LAST, for the same reason it was set first. */
+    if(!seal) h.protected=false;
+    h.updatedAt=now(); persist.houses();
+    if(settings.vault) settings.vault.migration=null;
+    persist.settings();
+    _vaultCache.clear();
+    vaultBusyDone(); _vaultMigrating=false;
+    return true;
+  }catch(err){
+    vaultBusyDone(); _vaultMigrating=false;
+    /* The journal stays put. The project stays protected and renders locked, and
+       reopening it picks up exactly where this stopped. Nothing is lost.
+       Losing the key mid-pass (the app was backgrounded) is the expected case,
+       not a fault, so say so plainly rather than reporting a failure. */
+    alert(vaultUnlocked()
+      ? 'That did not finish.\n\nNothing was lost — open the project again and it will carry on from where it stopped.'
+      : 'The vault locked before that finished.\n\nNothing was lost — unlock the project again and it will carry on from where it stopped.');
+    return false;
+  }
+}
+
+/* An interrupted pass finishes itself the next time the vault opens. */
+async function vaultResumeMigration(){
+  const m=settings.vault&&settings.vault.migration;
+  if(!m || !vaultUnlocked() || _vaultMigrating) return;
+  const h=houseById(m.houseId);
+  if(!h){ settings.vault.migration=null; persist.settings(); return; }
+  if(await vaultRunMigration(m.houseId, m.dir)){ render(); toast('Finished where it left off'); }
+}
+
+async function vaultProtectOn(houseId){
+  const h=houseById(houseId); if(!h || h.protected) return;
+  let firstEver=false;
+  if(!vaultExists()){
+    if(!(await vaultRunCeremony())) return;      /* gates 1-3 are the confirmation */
+    firstEver=true;
+  }else if(!vaultUnlocked()){
+    vaultUnlockSheet({ title:'Unlock to protect', body:'Enter your vault passphrase to put another project behind it.',
+                       onOpen:()=>vaultProtectOn(houseId) });
+    return;
+  }else if(!confirm('Protect "'+h.name+'"?\n\nIts notes, to-dos, specs and photos will be encrypted on this device. Without your vault passphrase nobody can read them — including EGS.')){
+    return;
+  }
+  /* Set FIRST, journal BEFORE the first record: from here on, an interruption
+     leaves a project that reads as protected and renders locked. */
+  h.protected=true; h.updatedAt=now(); persist.houses();
+  settings.vault.migration={ houseId, dir:'on', startedAt:now() }; persist.settings();
+  if(!(await vaultRunMigration(houseId,'on'))) { render(); return; }
+  /* Gate 4 — only the first time, when the passphrase is new and unproven. */
+  if(firstEver) await vaultVerificationGate();
+  go('house',houseId);
+  toast('Protected');
+}
+
+async function vaultProtectOff(houseId){
+  const h=houseById(houseId); if(!h || !h.protected) return;
+  if(!vaultUnlocked()){
+    vaultUnlockSheet({ title:'Unlock to remove protection', body:'Enter your vault passphrase.',
+                       onOpen:()=>vaultProtectOff(houseId) });
+    return;
+  }
+  if(!confirm('Remove protection from "'+h.name+'"?\n\nIts notes, to-dos, specs and photos go back to being stored unencrypted on this device — readable by anything that can read this app\'s storage.')) return;
+  settings.vault.migration={ houseId, dir:'off', startedAt:now() }; persist.settings();
+  if(await vaultRunMigration(houseId,'off')){ render(); toast('Protection removed'); }
+  else render();
+}
+
+/* The forgot-passphrase escape. Deleting is the only thing that can be done to
+   a locked project without the passphrase, so it has to be possible — and hard
+   to do by accident. Notes and to-dos are deleted rather than unlinked: leaving
+   ciphertext nobody can ever read floating around is not a kindness. */
+async function vaultDeleteLocked(houseId){
+  const h=houseById(houseId); if(!h) return;
+  const nSpecs=(h.specs||[]).length, nPhotos=(h.photos||[]).length;
+  const nNotes=notes.filter(n=>n.houseId===houseId).length;
+  const nTasks=tasks.filter(t=>t.houseId===houseId).length;
+  const total=nSpecs+nPhotos+nNotes+nTasks;
+  const pl=(n,w)=>n+' '+w+(n===1?'':'s');
+  if(!confirm('Delete "'+h.name+'" and everything in it?\n\n'
+    +pl(nNotes,'note')+', '+pl(nTasks,'to-do')+', '+pl(nSpecs,'spec')+', '+pl(nPhotos,'photo')+'.\n\n'
+    +'This data cannot be recovered. Deleting is the only option without the passphrase.')) return;
+  if(!confirm('Last check.\n\nAll '+pl(total,'item')+' in "'+h.name+'" will be gone permanently. There is no undo, and no copy anywhere else.\n\nDelete it?')) return;
+  for(const pid of (h.photos||[])){ await photoDel(pid).catch(()=>{}); }
+  notes=notes.filter(n=>n.houseId!==houseId);
+  tasks=tasks.filter(t=>t.houseId!==houseId);
+  houses=houses.filter(x=>x.id!==houseId);
+  if(settings.vault && settings.vault.migration && settings.vault.migration.houseId===houseId){
+    settings.vault.migration=null; persist.settings();
+  }
+  persist.houses(); persist.notes(); persist.tasks();
+  go('houses'); toast('Project deleted');
+}
+
+/* TODO — change passphrase: verify the old one, derive a key from the new one,
+   then re-encrypt every protected record and rewrite the verifier. Must be
+   atomic the same way encrypt-in-place is, or a half-rekeyed vault is
+   unopenable by either passphrase. Deliberately not built yet. */
 
 /* ============================================================
    BOOT
