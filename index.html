@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.07.31-1502';</script>
+<script>window.EGS_VERSION = '2026.07.31-1717';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -324,6 +324,17 @@
   #backup-banner .txt{flex:1;font-size:13px;line-height:1.4;color:var(--paper-dim)}
   #backup-banner .txt b{color:var(--paper);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
 
+  /* VAULT_CAPTURE — unsaved photo held in memory. Brass edge: this one is a
+     data-loss warning, not a nudge, and it does not go away on its own. */
+  #photo-hold-banner{
+    position:fixed;left:12px;right:12px;bottom:calc(var(--safe-b) + 14px);z-index:45;
+    background:var(--ink-3);border:1px solid var(--brass);border-radius:var(--radius);
+    padding:12px 10px 12px 16px;display:flex;align-items:center;gap:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.45);
+  }
+  #photo-hold-banner .txt{flex:1;font-size:13px;line-height:1.45;color:var(--paper-dim)}
+  #photo-hold-banner .txt b{color:var(--brass);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
+
   /* ---- Toast ---- */
   #toast{
     position:fixed;left:50%;transform:translateX(-50%);z-index:200;
@@ -421,6 +432,18 @@
     background:var(--ink-2);border:1px solid var(--line-soft);border-radius:var(--radius);padding:14px;
   }
   .v-check input{width:24px;height:24px;flex:none;accent-color:var(--brass);margin-top:1px}
+  /* VAULT_EYE — resting and revealed are a deliberate contrast pair, pinned to
+     the app's own tokens rather than to inherited or system colours. */
+  .pw-wrap{position:relative;display:block}
+  .pw-wrap .input{padding-right:52px}
+  .pw-eye{
+    position:absolute;right:3px;top:50%;transform:translateY(-50%);
+    width:44px;height:44px;border-radius:10px;display:grid;place-items:center;
+    background:none;color:var(--paper-dim);
+  }
+  .pw-eye:active{background:var(--ink-3)}
+  .pw-eye svg{width:20px;height:20px;display:block}
+  .pw-eye[aria-pressed="true"]{color:var(--brass)}
   .btn[disabled]{opacity:.38;pointer-events:none}
   .lock-chip{
     display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10.5px;
@@ -531,6 +554,9 @@ const I = {
   download:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>',
   upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9m0 0 4 4m-4-4-4 4M5 4h14"/></svg>',
   lock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
+  /* VAULT_EYE */
+  eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg>',
+  eyeOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 6.6A9.9 9.9 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a18 18 0 0 1-3.1 3.9M6.2 8.1A18 18 0 0 0 2 12s3.6 6.5 10 6.5a9.8 9.8 0 0 0 3.5-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>',
 };
 const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" height="60" rx="15" fill="#1C2027" stroke="#333A45"/><path d="M20 16v28h28" stroke="#D7A94B" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16h11M20 25h8M20 34h8" stroke="#D7A94B" stroke-width="3" stroke-linecap="round" opacity=".55"/><circle cx="44" cy="44" r="3.4" fill="#D7A94B"/></svg>';
 
@@ -739,6 +765,7 @@ async function vaultUnlock(pass){
   }catch(e){ _vaultKey=prev; return false; }
   vaultTouch();
   vaultResumeMigration();   /* VAULT_TOGGLE — finish anything that was interrupted */
+  flushHeldPhotos();        /* VAULT_CAPTURE — seal anything waiting on a key */
   return true;
 }
 function vaultRelock(silent){
@@ -1760,7 +1787,12 @@ function bind(){
   }
 
   /* Photos */
-  $app.querySelectorAll('[data-add-photo]').forEach(el=>el.onchange=e=>handlePhoto(e,view.param));
+  /* VAULT_CAPTURE — this click is about to hand us to the camera or the picker,
+     which backgrounds the app. Flag it so the background relock stands down. */
+  $app.querySelectorAll('[data-add-photo]').forEach(el=>{
+    el.onclick=()=>captureBegin();
+    el.onchange=e=>handlePhoto(e,view.param);
+  });
   $app.querySelectorAll('[data-del-photo]').forEach(b=>b.onclick=async ev=>{ ev.stopPropagation();
     if(!confirm('Delete this photo?'))return;
     const pid=b.dataset.delPhoto, h=houseById(view.param);
@@ -1810,6 +1842,7 @@ function bind(){
   const exp=$app.querySelector('[data-export]'); if(exp) exp.onclick=exportData;
   const imp=$app.querySelector('[data-import]'); if(imp) imp.onchange=importData;
   const impProj=$app.querySelector('[data-import-project]'); if(impProj) impProj.onchange=importSharedProject;
+  const shareAppBtn=$app.querySelector('[data-share-app]'); if(shareAppBtn) shareAppBtn.onclick=doShareApp;
   $app.querySelectorAll('[data-pay-tab]').forEach(b=>b.onclick=()=>{
     supportTab=b.dataset.payTab;
     $app.querySelectorAll('[data-pay-tab]').forEach(x=>x.classList.toggle('primary',x.dataset.payTab===supportTab));
@@ -1912,6 +1945,45 @@ const APP_MONETIZATION = {
   blurb: "Notebuilt is a one-time purchase \u2014 no subscription, no trial that runs out, no features held hostage after 30 days. Pay once and it's yours, priced like a real tool because it's built to save you real time on the job. [Edit this line with your actual price once it's set.]"
 };
 
+/* ============================================================
+   SHARE_APP — passing the app on, as a form of support.
+   Sends the public app link and nothing else. No project, no photo, no note,
+   no setting, no vault. There is deliberately no code path from here to user
+   data, and that is the property to keep true if this is ever extended.
+   ============================================================ */
+/* The share line. One string, easy to veto or rewrite. */
+const SHARE_APP_LINE = 'Notebuilt — the field notebook for construction crews. Private, offline, yours.';
+
+function appShareUrl(){
+  /* the app's own directory URL, never a deep link into any state */
+  return location.origin + location.pathname.replace(/[^/]*$/, '');
+}
+async function doShareApp(){
+  const url=appShareUrl();
+  if(navigator.share){
+    try{
+      await navigator.share({ title:APP_NAME, text:SHARE_APP_LINE, url });
+      return;                                     /* the OS sheet said its piece */
+    }catch(err){
+      if(err && err.name==='AbortError') return;  /* user backed out — say nothing */
+      /* anything else: fall through to the clipboard */
+    }
+  }
+  try{
+    await navigator.clipboard.writeText(SHARE_APP_LINE+' '+url);
+    toast('Link copied');
+  }catch(e){
+    /* clipboard refused (insecure context, permissions) — show it instead of
+       swallowing it, so there is always a way to get the link out */
+    sheet('<h2>Share '+esc(APP_NAME)+'</h2>'
+      +'<div class="muted" style="font-size:13px;margin-bottom:10px">Copy this and send it on:</div>'
+      +'<div class="card mono" style="font-size:12.5px;word-break:break-all;line-height:1.6">'
+      +esc(SHARE_APP_LINE+' '+url)+'</div>'
+      +'<button class="btn primary block" data-copy="'+esc(SHARE_APP_LINE+' '+url)+'" style="margin-top:10px">Copy</button>');
+    bindCopyButtons($mr);
+  }
+}
+
 function renderSupport(){
   const tabs=PAYMENT_TABS.map(t=>`<button class="btn sm ${t.id===supportTab?'primary':''}" data-pay-tab="${t.id}">${t.label}</button>`).join('');
   return `<div class="topbar">
@@ -1933,6 +2005,10 @@ function renderSupport(){
 
     <div class="sec-head"><span class="label">${APP_MONETIZATION.model==='paid'?'Pricing':'Free, always'}</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_MONETIZATION.blurb}</div>
+
+    <div class="sec-head"><span class="label">Share ${esc(APP_NAME)}</span><span class="rule"></span></div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">Know a crew who'd use this? Passing it on is its own kind of support, and it costs nothing. This sends the app's public link and nothing else &mdash; none of your projects, photos or notes go with it.</div>
+    <button class="btn block" data-share-app style="margin:10px 0 22px;display:flex;align-items:center;justify-content:center;gap:8px">${I.share} Share ${esc(APP_NAME)}</button>
 
     ${egsSupportCoreHtml(tabs)}
   </div>`;
@@ -1991,25 +2067,37 @@ async function doSaveNote(id){
 }
 
 async function handlePhoto(e,houseId){
-  const files=e.target.files?Array.from(e.target.files):[]; if(!files.length)return;
+  captureEnd();                                    /* VAULT_CAPTURE — the file landed */
+  const files=e.target.files?Array.from(e.target.files):[];
+  e.target.value='';
+  if(!files.length) return;
+  const h=houseById(houseId); if(!h) return;
   const multi=files.length>1;
   toast(multi?`Saving ${files.length} photos…`:'Saving photo…');
-  const h=houseById(houseId); h.photos=h.photos||[];
-  let saved=0, failed=0;
+  h.photos=h.photos||[];
+  let saved=0, failed=0; const held=[];
   for(const file of files){
+    let blob=null;
+    try{ blob=await downscale(file); }catch(err){ failed++; continue; }
+    /* VAULT_CAPTURE — re-checked per file, because a relock can land in the
+       middle of a batch. A photo we cannot seal is held in memory; it is never
+       written to disk in the clear, and never dropped without saying so. */
+    if(h.protected && !vaultUnlocked()){ held.push(blob); continue; }
     try{
-      const blob=await downscale(file); const id=uid();
+      const id=uid();
       await photoPutFor(houseId,{id,blob,houseId,createdAt:now()});
       h.photos.push(id);
       if(!h.cover) h.cover=id;
       saved++;
-    }catch(err){ failed++; }
+    }catch(err){
+      if(h.protected && !vaultUnlocked()) held.push(blob); else failed++;
+    }
   }
   h.updatedAt=now(); persist.houses(); render();
-  e.target.value='';
+  if(held.length) queueHeldPhotos(held, houseId);
   if(saved && failed) toast(`${saved} saved, ${failed} could not be read`);
   else if(failed) toast('Could not read those images');
-  else toast(multi?`${saved} photos saved`:'Photo saved');
+  else if(saved) toast(multi?`${saved} photos saved`:'Photo saved');
 }
 
 /* ===== SORTED ENGINE START =====
@@ -2158,13 +2246,137 @@ function setViewerCover(){
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden'){ _leavingView={name:view.name,param:view.param}; autosaveOpenNote(); } });
 window.addEventListener('pagehide',()=>{ _leavingView={name:view.name,param:view.param}; autosaveOpenNote(); });
 
+/* ============================================================
+   VAULT_CAPTURE — the app sending you to the camera is not the app being left
+   ------------------------------------------------------------
+   Tapping Camera backgrounds the PWA. Without this, the background relock
+   wipes the key and the returning photo has nothing to seal it — the photo is
+   lost. So a capture WE started defers the background trigger, and only that
+   trigger: the idle timer keeps running, and a hard ceiling relocks anyway if
+   nobody comes back.
+   ============================================================ */
+const VAULT_CAPTURE_GRACE_MS = 120000;   /* 2 min ceiling — drop to ~5000 to test */
+let _captureAt = 0;        /* 0 = no capture in flight */
+let _captureTimer = null;
+let _captureSettle = null;
+
+function captureActive(){ return _captureAt !== 0; }
+function captureBegin(){
+  _captureAt = now();
+  clearTimeout(_captureTimer);
+  /* Wandered off mid-capture: lock exactly as if the grace had never applied. */
+  _captureTimer = setTimeout(()=>{ _captureAt=0; _captureTimer=null; vaultRelock(true); },
+                             VAULT_CAPTURE_GRACE_MS);
+}
+function captureEnd(){
+  _captureAt = 0;
+  clearTimeout(_captureTimer); _captureTimer = null;
+  clearTimeout(_captureSettle); _captureSettle = null;
+}
+
+/* ---- a photo we could not seal, held in memory and nowhere else ---- */
+let _heldPhotos = null;    /* {houseId, blobs:[Blob]} — never persisted */
+
+function queueHeldPhotos(blobs, houseId){
+  if(!blobs || !blobs.length) return;
+  if(_heldPhotos && _heldPhotos.houseId===houseId) _heldPhotos.blobs.push(...blobs);
+  else _heldPhotos={ houseId, blobs:blobs.slice() };
+  showHeldPhotoBanner();
+  const h=houseById(houseId), n=_heldPhotos.blobs.length;
+  vaultUnlockSheet({
+    title: n===1?'Photo waiting to be saved':n+' photos waiting to be saved',
+    body: 'The vault locked while the camera was open, so '+(n===1?'it has':'they have')
+        +' not been saved yet. '+(n===1?'It is':'They are')+' held in memory only — unlock to '
+        +'encrypt '+(n===1?'it':'them')+' into "'+(h?h.name:'that project')+'".',
+    onOpen: ()=>{ flushHeldPhotos(); }
+  });
+}
+
+let _flushingHeld = false;
+async function flushHeldPhotos(){
+  if(_flushingHeld || !_heldPhotos || !vaultUnlocked()) return;
+  _flushingHeld=true;
+  /* Claim the queue SYNCHRONOUSLY, before the first await. Unlocking fires this
+     from two places — vaultUnlock() and the unlock sheet's onOpen — and without
+     claiming it up front both run, both see the same queue, and the photo gets
+     saved twice. The re-entrancy flag alone is not enough: the second caller can
+     arrive after this one has already yielded on photoPutFor. */
+  const houseId=_heldPhotos.houseId, blobs=_heldPhotos.blobs.slice();
+  _heldPhotos=null;
+  const h=houseById(houseId);
+  if(!h){ _flushingHeld=false; dismissHeldPhotoBanner(); return; }
+  h.photos=h.photos||[];
+  let saved=0; const stillHeld=[];
+  for(const blob of blobs){
+    try{
+      const id=uid();
+      await photoPutFor(houseId,{id,blob,houseId,createdAt:now()});
+      h.photos.push(id); if(!h.cover) h.cover=id; saved++;
+    }catch(err){ stillHeld.push(blob); }   /* keep it rather than drop it */
+  }
+  if(saved){ h.updatedAt=now(); persist.houses(); }
+  if(stillHeld.length){
+    /* Put back what would not write, merged with anything that arrived while
+       we were working. Never overwrite a newer queue. */
+    _heldPhotos = (_heldPhotos && _heldPhotos.houseId===houseId)
+      ? { houseId, blobs: stillHeld.concat(_heldPhotos.blobs) }
+      : { houseId, blobs: stillHeld };
+    showHeldPhotoBanner();
+  } else if(!_heldPhotos){ dismissHeldPhotoBanner(); }
+  _flushingHeld=false;
+  render();
+  if(saved) toast(saved===1?'Photo saved':saved+' photos saved');
+}
+
+function dismissHeldPhotoBanner(){
+  const el=document.getElementById('photo-hold-banner'); if(el) el.remove();
+}
+function showHeldPhotoBanner(){
+  dismissHeldPhotoBanner();
+  if(!_heldPhotos) return;
+  const n=_heldPhotos.blobs.length, h=houseById(_heldPhotos.houseId);
+  const it=n===1?'it':'them', isAre=n===1?'It is':'They are';
+  const el=document.createElement('div');
+  el.id='photo-hold-banner';
+  el.innerHTML=`<div class="txt"><b>${n} photo${n===1?'':'s'} not saved yet</b>${isAre} held in memory only, waiting for your vault passphrase. Closing the app loses ${it}.</div>
+    <button class="btn primary sm" id="hold-unlock">Save</button>
+    <button class="icon-btn" id="hold-discard" aria-label="Discard unsaved photos" style="width:36px;height:36px;flex:none">${I.trash}</button>`;
+  document.body.appendChild(el);
+  document.getElementById('hold-unlock').onclick=()=>{
+    if(vaultUnlocked()){ flushHeldPhotos(); return; }
+    vaultUnlockSheet({
+      title: n===1?'Unlock to save the photo':'Unlock to save these photos',
+      body: 'Your vault passphrase encrypts '+it+' into "'+(h?h.name:'that project')+'".',
+      onOpen: ()=>{ flushHeldPhotos(); }
+    });
+  };
+  /* The ONLY way a held photo goes away without being saved. Confirmed, never silent. */
+  document.getElementById('hold-discard').onclick=()=>{
+    if(!confirm('Discard '+n+' unsaved photo'+(n===1?'':'s')+'?\n\n'+isAre
+      +' not saved anywhere, and this cannot be undone.')) return;
+    _heldPhotos=null; dismissHeldPhotoBanner();
+    toast(n===1?'Photo discarded':'Photos discarded');
+  };
+}
+
 /* VAULT_CORE — the key never survives the app going out of sight. Autosave
    above runs first, so an open protected note is sealed before we drop the key. */
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden') vaultRelock(true);
-  else if(view.name==='house' && isProtected(view.param)) render();
+  if(document.visibilityState==='hidden'){
+    /* VAULT_CAPTURE — deferred only while a capture we started is in flight. */
+    if(!captureActive()) vaultRelock(true);
+    return;
+  }
+  /* Back in the foreground. If a capture was in flight, give the change event a
+     moment to land; if nothing arrives it was cancelled, so just clear the flag
+     and leave everything else exactly as it was. */
+  if(captureActive()){
+    clearTimeout(_captureSettle);
+    _captureSettle=setTimeout(()=>{ if(captureActive()) captureEnd(); }, 2500);
+  }
+  if(view.name==='house' && isProtected(view.param)) render();
 });
-window.addEventListener('pagehide',()=>vaultRelock(true));
+window.addEventListener('pagehide',()=>{ if(!captureActive()) vaultRelock(true); });
 ['pointerdown','keydown','touchstart'].forEach(ev=>
   document.addEventListener(ev,()=>{ if(_vaultKey) vaultTouch(); },{passive:true}));
 
@@ -2789,6 +3001,34 @@ function setupPin(){
    VAULT_CEREMONY — setup, unlock, and the encrypt/decrypt progress overlay
    ============================================================ */
 const $vault=document.getElementById('vault');
+
+/* VAULT_EYE — every passphrase field can be revealed. Default hidden, one
+   toggle per field, no global "show all". A hidden double-typo at creation is
+   the worst thing this feature can do to someone, because there is no recovery
+   and no way to find out until it is far too late. */
+function pwField(id, placeholder, autocomplete){
+  return '<span class="pw-wrap">'
+    +'<input class="input" type="password" id="'+id+'"'
+    +(placeholder?' placeholder="'+esc(placeholder)+'"':'')
+    +' autocomplete="'+(autocomplete||'current-password')+'"'
+    +' autocapitalize="off" autocorrect="off" spellcheck="false">'
+    +'<button type="button" class="pw-eye" data-pw-eye="'+id+'"'
+    +' aria-label="Show passphrase" aria-pressed="false">'+I.eye+'</button>'
+    +'</span>';
+}
+function bindPwEyes(scope){
+  scope.querySelectorAll('[data-pw-eye]').forEach(b=>b.onclick=()=>{
+    const inp=scope.querySelector('#'+b.getAttribute('data-pw-eye')); if(!inp) return;
+    const reveal = inp.type==='password';
+    inp.type = reveal ? 'text' : 'password';
+    b.setAttribute('aria-pressed', reveal?'true':'false');
+    b.setAttribute('aria-label', reveal?'Hide passphrase':'Show passphrase');
+    b.innerHTML = reveal ? I.eyeOff : I.eye;
+    /* keep the caret where it was — retyping from scratch is the thing we are
+       trying to avoid */
+    const v=inp.value; inp.focus(); try{ inp.setSelectionRange(v.length,v.length); }catch(e){}
+  });
+}
 function vaultOverlay(html){
   $vault.classList.remove('hidden');
   $vault.innerHTML=html;
@@ -2850,12 +3090,13 @@ function vaultRunCeremony(){
         +'<div class="v-copy">Separate from your app PIN, and not stored anywhere. '
         +'Longer beats clever &mdash; <b>a short sentence beats P@ss1</b>. '
         +'Minimum '+VAULT_MIN_PASS+' characters.</div>'
-        +'<div class="field"><label>Passphrase</label><input class="input" type="password" id="v-p1" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
-        +'<div class="field"><label>Type it again</label><input class="input" type="password" id="v-p2" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+        +'<div class="field"><label>Passphrase</label>'+pwField('v-p1','','new-password')+'</div>'
+        +'<div class="field"><label>Type it again</label>'+pwField('v-p2','','new-password')+'</div>'
         +'<div class="v-err">'+esc(err||'')+'</div>'
         +'<div class="v-actions">'
         +'<button class="btn primary block" data-v-next>Continue</button>'
         +'<button class="btn block" data-v-cancel>Cancel</button></div>');
+      bindPwEyes($vault);
       setTimeout(()=>{ const el=$vault.querySelector('#v-p1'); if(el) el.focus(); },60);
       $vault.querySelector('[data-v-cancel]').onclick=cancel;
       $vault.querySelector('[data-v-next]').onclick=()=>{
@@ -2919,9 +3160,10 @@ function vaultVerificationGate(){
         +'<div class="v-copy">Your project is locked. Open it with the passphrase you just '
         +'wrote down &mdash; before you put anything in it. If what you wrote down doesn\'t '
         +'work, this is the moment to find out.</div>'
-        +'<div class="field"><label>Vault passphrase</label><input class="input" type="password" id="v-vp" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+        +'<div class="field"><label>Vault passphrase</label>'+pwField('v-vp','','current-password')+'</div>'
         +'<div class="v-err">'+esc(err||'')+'</div>'
         +'<div class="v-actions"><button class="btn primary block" data-v-go>Unlock</button></div>');
+      bindPwEyes($vault);
       setTimeout(()=>{ const el=$vault.querySelector('#v-vp'); if(el) el.focus(); },60);
       const go=async()=>{
         const btn=$vault.querySelector('[data-v-go]'), inp=$vault.querySelector('#v-vp');
@@ -2945,9 +3187,10 @@ function vaultUnlockSheet(opts){
     sheet('<h2>'+esc(opts.title||'Unlock protected projects')+'</h2>'
       +'<div class="muted" style="font-size:13px;margin-bottom:14px">'
       +esc(opts.body||'Enter your vault passphrase. This is not your app PIN.')+'</div>'
-      +'<div class="field"><input class="input" type="password" id="v-up" placeholder="Vault passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'
+      +'<div class="field">'+pwField('v-up','Vault passphrase','current-password')+'</div>'
       +'<div class="v-err">'+esc(err||'')+'</div>'
       +'<button class="btn primary block" id="v-ugo">Unlock</button>');
+    bindPwEyes($mr);
     setTimeout(()=>{ const el=$mr.querySelector('#v-up'); if(el) el.focus(); },60);
     const go=async()=>{
       const btn=$mr.querySelector('#v-ugo'), inp=$mr.querySelector('#v-up');
@@ -3214,7 +3457,7 @@ if(isIOSDevice()) setTimeout(maybeShowInstallPrompt,1200);
 
 function maybeShowInstallPrompt(){
   if(installPromptShown||isStandaloneApp()||localStorage.getItem('installPromptDismissed')||!appUnlocked()) return;
-  if(document.getElementById('backup-banner')) return;
+  if(document.getElementById('backup-banner')||document.getElementById('photo-hold-banner')) return;
   if(deferredInstallPrompt) showInstallBanner('android');
   else if(isIOSDevice()) showInstallBanner('ios');
 }
@@ -3222,7 +3465,7 @@ function maybeShowInstallPrompt(){
 /* CHUNK21_BACKUP_NUDGE — quiet, infrequent, never a modal */
 async function maybeShowDataSafetyNudge(){
   if(!appUnlocked()) return;
-  if(document.getElementById('install-banner')||document.getElementById('backup-banner')) return;
+  if(document.getElementById('install-banner')||document.getElementById('backup-banner')||document.getElementById('photo-hold-banner')) return;
   if(!houses.length) return;
   const snoozeUntil=parseInt(localStorage.getItem('backupNudgeSnoozeUntil')||'0',10);
   if(Date.now()<snoozeUntil) return;
