@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.08-1105';</script>
+<script>window.EGS_VERSION = '2026.08.08-1206';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -599,7 +599,7 @@ const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" 
 /* ---------- storage: localStorage JSON ---------- */
 /* EGS durability guard: persist + backup + self-heal + empty-overwrite protection */
 (function(){
-  const CRIT = ['pl.houses','pl.tasks','pl.notes','pl.settings'];
+  const CRIT = ['notebuilt.houses','notebuilt.tasks','notebuilt.notes','notebuilt.settings'];
   const boot = Date.now();
   let _set, _get;
   try { _set = localStorage.setItem.bind(localStorage); _get = localStorage.getItem.bind(localStorage); } catch(e){ return; }
@@ -629,7 +629,7 @@ const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" 
     }
   } catch(e){}
 })();
-const K = { houses:'pl.houses', tasks:'pl.tasks', notes:'pl.notes', settings:'pl.settings', categories:'pl.categories' };
+const K = { houses:'notebuilt.houses', tasks:'notebuilt.tasks', notes:'notebuilt.notes', settings:'notebuilt.settings', categories:'notebuilt.categories' };
 function load(key,fallback){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
 function save(key,val){ localStorage.setItem(key,JSON.stringify(val)); }
 let houses = load(K.houses,[]);
@@ -654,7 +654,7 @@ let _db=null;
 function db(){
   if(_db) return Promise.resolve(_db);
   return new Promise((res,rej)=>{
-    const r=indexedDB.open('punchlist',1);
+    const r=indexedDB.open('notebuilt',1);
     r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains('photos')) d.createObjectStore('photos',{keyPath:'id'}); };
     r.onsuccess=()=>{ _db=r.result; res(_db); };
     r.onerror=()=>rej(r.error);
@@ -3891,7 +3891,7 @@ window.addEventListener('beforeinstallprompt', e=>{
 if(isIOSDevice()) setTimeout(maybeShowInstallPrompt,1200);
 
 function maybeShowInstallPrompt(){
-  if(installPromptShown||isStandaloneApp()||localStorage.getItem('installPromptDismissed')||!appUnlocked()) return;
+  if(installPromptShown||isStandaloneApp()||localStorage.getItem('notebuilt.installPromptDismissed')||!appUnlocked()) return;
   if(document.getElementById('backup-banner')) return;
   if(deferredInstallPrompt) showInstallBanner('android');
   else if(isIOSDevice()) showInstallBanner('ios');
@@ -3902,7 +3902,7 @@ async function maybeShowDataSafetyNudge(){
   if(!appUnlocked()) return;
   if(document.getElementById('install-banner')||document.getElementById('backup-banner')) return;
   if(!houses.length) return;
-  const snoozeUntil=parseInt(localStorage.getItem('backupNudgeSnoozeUntil')||'0',10);
+  const snoozeUntil=parseInt(localStorage.getItem('notebuilt.backupNudgeSnoozeUntil')||'0',10);
   if(Date.now()<snoozeUntil) return;
 
   const last=settings.lastBackupAt||0;
@@ -3935,7 +3935,7 @@ function showDataSafetyBanner(neverBackedUp, notPersistent){
     dismissBackupBanner();
   };
   document.getElementById('backup-x').onclick=()=>{
-    localStorage.setItem('backupNudgeSnoozeUntil', String(Date.now()+7*86400000));
+    localStorage.setItem('notebuilt.backupNudgeSnoozeUntil', String(Date.now()+7*86400000));
     dismissBackupBanner();
   };
 }
@@ -3967,7 +3967,7 @@ function showInstallBanner(mode){
 }
 function dismissInstallBanner(){
   const el=document.getElementById('install-banner'); if(el) el.remove();
-  localStorage.setItem('installPromptDismissed','1');
+  localStorage.setItem('notebuilt.installPromptDismissed','1');
 }
 
 lockGate();
