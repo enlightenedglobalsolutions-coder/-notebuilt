@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.10-1727';</script>
+<script>window.EGS_VERSION = '2026.08.11-1729';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -287,6 +287,12 @@
     position:fixed;inset:0;z-index:100;background:var(--ink);
     display:flex;flex-direction:column;align-items:center;justify-content:center;
     padding:30px;gap:6px;
+    /* PIN_STEADY — a centred column that outgrows the viewport pushes its top
+       out of reach, and nothing can scroll to it. 'safe center' falls back to
+       flex-start exactly when that would happen; the overflow pair keeps the
+       scrolling inside this layer instead of the page behind it. */
+    overflow-y:auto; overscroll-behavior:contain;
+    justify-content:safe center;
   }
   #lock .mark{margin-bottom:10px}
   #lock .mark svg{width:58px;height:58px}
@@ -299,10 +305,34 @@
   .keypad button{
     height:72px;border-radius:50%;background:var(--ink-2);font-family:var(--mono);
     font-size:24px;color:var(--paper);border:1px solid var(--line-soft);
+    /* PIN_STEADY — manipulation drops the double-tap-zoom gesture, and with it
+       the 300ms tap delay and the viewport shuffle that comes with it. */
+    touch-action:manipulation; -webkit-user-select:none; user-select:none;
   }
   .keypad button:active{background:var(--ink-3)}
   .keypad button.blank{background:none;border:none}
-  #lock .err{color:var(--danger);font-size:13px;min-height:18px;margin-top:6px}
+  /* PIN_STEADY_ERRLINE — min-height:18px reserved the row but fell 0.84px short
+     of the 13px/1.45 line box, so the row grew the moment a message appeared and
+     the centred column split the growth above and below. Pinning line-height to
+     the same 19px the empty box reserves makes the height unconditional. */
+  #lock .err{color:var(--danger);font-size:13px;min-height:19px;line-height:19px;margin-top:6px}
+
+  /* PIN_RECOVERY */
+  .lock-link{
+    margin-top:18px;font-family:var(--mono);font-size:12px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--paper-dim);text-decoration:underline;
+    text-underline-offset:4px;padding:10px 12px;touch-action:manipulation;
+  }
+  .lock-copy{font-size:14px;line-height:1.62;color:var(--paper-dim);max-width:340px;text-align:center}
+  .lock-copy b{color:var(--paper)}
+  #lock .lock-field{width:min(340px,86vw)}
+  .lock-actions{width:min(340px,86vw);display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .reco-code{
+    font-family:var(--mono);font-size:19px;letter-spacing:.16em;color:var(--brass);
+    background:var(--ink-2);border:1px solid var(--line-soft);border-radius:12px;
+    padding:15px 12px;margin:14px 0 2px;text-align:center;word-break:break-all;
+    -webkit-user-select:all;user-select:all;
+  }
 
   /* CHUNK18_INSTALL_PROMPT */
   #install-banner{
@@ -1687,6 +1717,11 @@ function renderSettings(){
     <div class="card row"><div class="grow"><div>App lock</div><div class="muted" style="font-size:13px">${locked?'A PIN is required to open the app.':'Off — anyone with the phone can open it.'}</div></div>
       <button class="btn sm" data-pin>${locked?'Change':'Set PIN'}</button></div>
     ${locked?`<button class="btn danger block sm" data-pin-off style="margin-top:-4px">Turn off app lock</button>`:''}
+    ${locked?`<div class="card row" data-help="pin-recovery"><div class="grow"><div>If you forget your PIN</div><div class="muted" style="font-size:13px">${
+        vaultExists() ? 'Your vault passphrase resets it.'
+      : recoveryExists() ? 'A recovery code is set. Only its hash is stored here.'
+      : 'Nothing is set up \u2014 you would be locked out.'}</div></div>${
+        vaultExists() ? '' : `<button class="btn sm" data-reco-new>${recoveryExists()?'New code':'Create'}</button>`}</div>`:''}
 
     <div class="sec-head"><span class="label">Protected projects</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Vault</div><div class="muted" style="font-size:13px">${esc(vaultStatusLine())}</div></div>
@@ -2078,6 +2113,13 @@ function bind(){
   /* Settings */
   const pin=$app.querySelector('[data-pin]'); if(pin) pin.onclick=()=>setupPin();
   const pinOff=$app.querySelector('[data-pin-off]'); if(pinOff) pinOff.onclick=()=>{ if(confirm('Turn off the app lock?')){ settings.pinHash=null; settings.pinSalt=null; persist.settings(); render(); toast('App lock off'); } };
+  /* PIN_RECOVERY — issuing a new code retires the old one, so say so first. */
+  const recoNew=$app.querySelector('[data-reco-new]');
+  if(recoNew) recoNew.onclick=async()=>{
+    if(recoveryExists() && !confirm('Issue a new recovery code?\n\nThe one you wrote down before will stop working.')) return;
+    settings.recoveryOfferedAt=now();
+    recoveryCodeSheet(await recoverySet(), false);
+  };
   const vLock=$app.querySelector('[data-vault-lock]'); if(vLock) vLock.onclick=()=>{ vaultRelock(); toast('Protected projects locked'); };
   const exp=$app.querySelector('[data-export]'); if(exp) exp.onclick=exportData;
   const imp=$app.querySelector('[data-import]'); if(imp) imp.onchange=importData;
@@ -3604,7 +3646,15 @@ async function importData(e){
       /* The PIN is not cryptographic and belongs to the phone in your hand,
          not to the file. Keep the one already set here; take the backup's only
          on a device that has none. */
-      if(settings.pinHash){ next.pinHash=settings.pinHash; next.pinSalt=settings.pinSalt; }
+      if(settings.pinHash){
+        next.pinHash=settings.pinHash; next.pinSalt=settings.pinSalt;
+        /* PIN_RECOVERY — the recovery credential is the way into THIS phone and
+           belongs to the PIN it was issued alongside. Taking the backup's code
+           while keeping the device's PIN would silently change which written-down
+           code opens the door. On a fresh install both come from the file. */
+        next.recovery=settings.recovery||null;
+        next.recoveryOfferedAt=settings.recoveryOfferedAt||null;
+      }
       settings=next;
     }
     settings.vault=vaultBlock;
@@ -3640,53 +3690,301 @@ async function importData(e){
 async function sha(text){ const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)); return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
 function randSalt(){ return [...crypto.getRandomValues(new Uint8Array(8))].map(b=>b.toString(16).padStart(2,'0')).join(''); }
 
+/* ============================================================
+   PIN_RECOVERY — getting back in when the PIN is gone
+   The PIN is a privacy gate, not a lock on the data: nothing is encrypted
+   under it. That cuts both ways — it is why forgetting it must not cost you
+   the app, and why a way back is not a hole in anything. Where a vault exists
+   its passphrase is already the stronger credential, so it is the way back.
+   Where there is none, a one-time code written down at setup stands in.
+   ============================================================ */
+/* No I, O, 0 or 1 — this gets copied off a screen onto paper and back again.
+   32 symbols divides 256 exactly, so the modulo below is unbiased. */
+const RECOVERY_ALPHABET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const RECOVERY_LEN=16;   /* 16 chars from 32 symbols = 80 bits */
+
+/* PIN_RECOVERY — info-mode copy, planted now so info mode inherits it. */
+const HELP_COPY={
+  'pin-recovery':'Your PIN keeps casual hands out of the app. It does not encrypt anything \u2014 the vault passphrase does.'
+};
+
+function recoveryGenerate(){
+  const bytes=crypto.getRandomValues(new Uint8Array(RECOVERY_LEN));
+  let s='';
+  for(let i=0;i<RECOVERY_LEN;i++) s+=RECOVERY_ALPHABET[bytes[i]%RECOVERY_ALPHABET.length];
+  return s.replace(/(.{4})(?=.)/g,'$1-');
+}
+/* Dashes, spaces and case are how a human writes it down. None of them count. */
+function recoveryNormalize(s){ return String(s==null?'':s).toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function recoveryExists(){ return !!(settings.recovery && settings.recovery.hash && settings.recovery.salt); }
+async function recoverySet(){
+  const code=recoveryGenerate(), salt=randSalt();
+  settings.recovery={ salt:salt, hash:await sha(recoveryNormalize(code)+salt), createdAt:now() };
+  persist.settings();
+  return code;                      /* the only moment the plain code exists */
+}
+async function recoveryVerify(input){
+  if(!recoveryExists()) return false;
+  const norm=recoveryNormalize(input);
+  if(!norm) return false;
+  return (await sha(norm+settings.recovery.salt))===settings.recovery.hash;
+}
+
+/* One screen shape for all three answers to "forgot PIN". */
+function lockPrompt(o){
+  $lock.classList.remove('hidden');
+  $lock.innerHTML='<div class="mark">'+MARK+'</div>'
+    +'<div class="name">'+esc(o.title)+'</div>'
+    +'<div class="lock-copy" style="margin:12px 0 14px">'+o.copy+'</div>'
+    +(o.field?'<div class="lock-field">'+o.field+'</div>':'')
+    +'<div class="err"></div>'
+    +'<div class="lock-actions">'
+      +(o.go?'<button type="button" class="btn primary block" data-go>'+esc(o.go)+'</button>':'')
+      +'<button type="button" class="btn block" data-back>'+esc(o.back||'Back')+'</button>'
+    +'</div>';
+  $lock.querySelector('[data-back]').onclick=o.onBack;
+  return { err:$lock.querySelector('.err'), go:$lock.querySelector('[data-go]') };
+}
+
+function forgotPinFlow(){
+  const back=()=>lockGate();
+  if(vaultExists())    return forgotViaVault(back);
+  if(recoveryExists()) return forgotViaCode(back);
+  return forgotDeadEnd(back);
+}
+
+function forgotViaVault(back){
+  const ui=lockPrompt({
+    title:'Forgot PIN',
+    copy:'Your PIN keeps casual hands out of the app. It does not encrypt anything \u2014 '
+        +'your <b>vault passphrase</b> does, and that is the way back in. Enter it to set a new PIN.',
+    field:'<div class="field">'+pwField('r-vp','Vault passphrase','current-password')+'</div>',
+    go:'Continue', onBack:back });
+  bindPwEyes($lock);
+  setTimeout(()=>{ const el=$lock.querySelector('#r-vp'); if(el) el.focus(); },60);
+  const run=async()=>{
+    const inp=$lock.querySelector('#r-vp'), pass=inp.value; if(!pass) return;
+    ui.go.setAttribute('disabled',''); ui.go.textContent='Checking\u2026';
+    /* Checked and dropped. Resetting a PIN does not widen into vault access. */
+    const key=await vaultKeyFor(pass, settings.vault);
+    if(key){ newPinAfterRecovery(false); return; }
+    await new Promise(r=>setTimeout(r,1000));
+    ui.go.removeAttribute('disabled'); ui.go.textContent='Continue';
+    ui.err.textContent='That is not your vault passphrase.';
+  };
+  ui.go.onclick=run;
+  $lock.querySelector('#r-vp').addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
+}
+
+function forgotViaCode(back){
+  const ui=lockPrompt({
+    title:'Forgot PIN',
+    copy:'Enter the recovery code you wrote down. Dashes and capitals do not matter. '
+        +'It works <b>once</b> \u2014 a fresh one is issued straight after.',
+    field:'<div class="field"><label>Recovery code</label>'
+         +'<input class="input" id="r-code" autocomplete="off" autocapitalize="characters" '
+         +'autocorrect="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX"></div>',
+    go:'Continue', onBack:back });
+  setTimeout(()=>{ const el=$lock.querySelector('#r-code'); if(el) el.focus(); },60);
+  const run=async()=>{
+    const inp=$lock.querySelector('#r-code'); if(!recoveryNormalize(inp.value)) return;
+    ui.go.setAttribute('disabled',''); ui.go.textContent='Checking\u2026';
+    if(await recoveryVerify(inp.value)){ newPinAfterRecovery(true); return; }
+    await new Promise(r=>setTimeout(r,1000));
+    ui.go.removeAttribute('disabled'); ui.go.textContent='Continue';
+    ui.err.textContent='That code does not match. Check for a mistyped letter.';
+  };
+  ui.go.onclick=run;
+  $lock.querySelector('#r-code').addEventListener('keydown',e=>{ if(e.key==='Enter') run(); });
+}
+
+/* The honest answer. No vault, no code, no way through — and no pretending. */
+function forgotDeadEnd(back){
+  lockPrompt({
+    title:'Forgot PIN',
+    copy:'Nothing was set up on this device to get back in, so there is no way past this '
+        +'screen \u2014 not by us, not by anyone.<br><br>Your projects are still on the phone and '
+        +'still intact. If you have a backup file, install the app fresh and restore it: a backup '
+        +'is not protected by the PIN, and restoring it lets you set a new one.',
+    onBack:back, back:'Back to the keypad' });
+}
+
+function recoveryCodeHtml(code, spent){
+  return '<div class="lock-copy">'+(spent
+      ? 'That code is spent. Here is your new one \u2014 <b>write it down before you continue</b>.'
+      : '<b>Write this down</b> and keep it somewhere safe. It is how you get back into the app if you forget your PIN.')
+    +'</div><div class="reco-code">'+esc(code)+'</div>'
+    +'<div class="lock-copy" style="font-size:12.5px;margin-top:10px">Only a hash of it is stored, so it can never be shown again. '
+    +'Lose it and you can issue a new one from Settings.</div>';
+}
+function showRecoveryCode(code, spent, onDone){
+  $lock.classList.remove('hidden');
+  $lock.innerHTML='<div class="mark">'+MARK+'</div><div class="name">Recovery code</div>'
+    +recoveryCodeHtml(code, spent)
+    +'<div class="lock-actions"><button type="button" class="btn primary block" data-done>I have written it down</button></div>';
+  $lock.querySelector('[data-done]').onclick=onDone;
+}
+function recoveryCodeSheet(code, spent){
+  sheet('<h2>Recovery code</h2>'+recoveryCodeHtml(code, spent)
+    +'<button class="btn primary block" style="margin-top:16px" data-done>I have written it down</button>');
+  $mr.querySelector('[data-done]').onclick=()=>{ closeSheet(); render(); };
+}
+
+/* Confirm-twice, built once, same rules as the keypad it replaces. */
+function newPinAfterRecovery(viaCode){
+  let stage=1, first='', entry='', busy=false;
+  $lock.classList.remove('hidden');
+  $lock.innerHTML='<div class="mark">'+MARK+'</div><div class="name">Set a new PIN</div>'
+    +'<div class="hint" data-pin-msg>Choose a 4-digit PIN</div>'
+    +'<div class="dots">'+[0,1,2,3].map(()=>'<div class="d"></div>').join('')+'</div>'
+    +'<div class="err"></div>'
+    +'<div class="keypad">'+PIN_KEYPAD_HTML+'</div>';
+  const $dots=[...$lock.querySelectorAll('.dots .d')];
+  const $msg=$lock.querySelector('[data-pin-msg]'), $err=$lock.querySelector('.err');
+  const paint=(msg,err)=>{
+    $dots.forEach((d,i)=>d.classList.toggle('on', i<entry.length));
+    if(msg!==undefined) $msg.textContent=msg;
+    if(err!==undefined) $err.textContent=err||'';
+  };
+  const done=()=>{ $lock.classList.add('hidden'); $lock.innerHTML=''; showShell(true); render(); toast('New PIN set'); };
+  $lock.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
+    if(busy) return;
+    const k=b.dataset.k;
+    if(k==='del'){ entry=entry.slice(0,-1); paint(undefined,''); return; }
+    if(entry.length>=4) return;
+    entry+=k; paint(undefined,'');
+    if(entry.length<4) return;
+    if(stage===1){ first=entry; entry=''; stage=2; paint('Re-enter to confirm'); return; }
+    if(entry!==first){ entry=''; stage=1; first=''; paint('Choose a 4-digit PIN','Did not match \u2014 start again'); return; }
+    busy=true;
+    const salt=randSalt(); settings.pinSalt=salt; settings.pinHash=await sha(first+salt);
+    persist.settings();
+    /* Single use: the code that opened this door is spent, so mint the next one
+       before letting go of the screen that can show it. */
+    if(viaCode){ const code=await recoverySet(); busy=false; showRecoveryCode(code, true, done); }
+    else { busy=false; done(); }
+  });
+}
+
+/* One offer, on one unlock, for installs that predate any of this. Recorded the
+   moment it is SHOWN, not when it is answered — being asked twice is nagging. */
+function maybeOfferRecoveryCode(){
+  if(!settings.pinHash) return;
+  if(vaultExists() || recoveryExists()) return;
+  if(settings.recoveryOfferedAt) return;
+  if($mr.innerHTML) return;                    /* something else already has the screen */
+  settings.recoveryOfferedAt=now(); persist.settings();
+  sheet('<h2>A way back into the app</h2>'
+    +'<div class="muted" style="font-size:13.5px;line-height:1.62">'+esc(HELP_COPY['pin-recovery'])
+    +'<br><br>But if you forget the PIN right now, there is no way back in. Generate a one-time '
+    +'recovery code and write it down \u2014 you will only be asked this once.</div>'
+    +'<div style="display:flex;gap:10px;margin-top:16px">'
+    +'<button class="btn primary" style="flex:1" data-reco-go>Generate a code</button>'
+    +'<button class="btn" style="flex:1" data-reco-no>Not now</button></div>');
+  $mr.querySelector('[data-reco-no]').onclick=closeSheet;
+  $mr.querySelector('[data-reco-go]').onclick=async()=>{ recoveryCodeSheet(await recoverySet(), false); };
+}
+
+/* PIN_STEADY — one keypad, both callers. type="button" because these
+   defaulted to type="submit"; the blank cell is not a tab stop. */
+const PIN_KEYPAD_HTML =
+  [1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" data-k="${n}">${n}</button>`).join('')
+  + '<button type="button" class="blank" tabindex="-1" aria-hidden="true"></button>'
+  + '<button type="button" data-k="0">0</button>'
+  + '<button type="button" data-k="del" aria-label="Delete">\u232B</button>';
+
 const $lock=document.getElementById('lock');
 function showShell(show){ document.getElementById('app').classList.toggle('hidden',!show); $nav.classList.toggle('hidden',!show); }
 
 function lockGate(){
   if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); return; }
   showShell(false); $fab.classList.add('hidden');
-  let entry='', verifying=true;
-  const draw=(err='')=>{
-    $lock.classList.remove('hidden');
-    $lock.innerHTML=`<div class="mark">${MARK}</div><div class="name">${esc(APP_NAME)}</div>
+  let entry='';
+  /* PIN_STEADY — built ONCE, on the way in.
+     The old code re-assigned $lock.innerHTML on every digit: 27 nodes torn
+     down and rebuilt, including the button still under the thumb, which held
+     focus at that instant. Focus fell to <body> and iOS answered by scrolling
+     the screen down. Desktop Chrome moved 0px for the same code, which is why
+     it only ever showed up on the phone.
+     A keypress now writes two things: four dot classes, and one line of text. */
+  $lock.classList.remove('hidden');
+  $lock.innerHTML=`<div class="mark">${MARK}</div><div class="name">${esc(APP_NAME)}</div>
       <div class="hint">Enter PIN</div>
-      <div class="dots">${[0,1,2,3].map(i=>`<div class="d ${i<entry.length?'on':''}"></div>`).join('')}</div>
-      <div class="err">${esc(err)}</div>
-      <div class="keypad">${[1,2,3,4,5,6,7,8,9].map(n=>`<button data-k="${n}">${n}</button>`).join('')}<button class="blank"></button><button data-k="0">0</button><button data-k="del">⌫</button></div>`;
-    $lock.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
-      const k=b.dataset.k;
-      if(k==='del'){ entry=entry.slice(0,-1); draw(); return; }
-      if(entry.length>=4) return;
-      entry+=k;
-      if(entry.length===4){
-        const ok=(await sha(entry+settings.pinSalt))===settings.pinHash;
-        if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); }
-        else{ entry=''; draw('Wrong PIN'); }
-      } else draw();
-    });
+      <div class="dots">${[0,1,2,3].map(()=>'<div class="d"></div>').join('')}</div>
+      <div class="err"></div>
+      <div class="keypad">${PIN_KEYPAD_HTML}</div>
+      <button type="button" class="lock-link" data-forgot>Forgot PIN?</button>`;
+  $lock.querySelector('[data-forgot]').onclick=forgotPinFlow;   /* PIN_RECOVERY */
+  const $dots=[...$lock.querySelectorAll('.dots .d')];
+  const $err=$lock.querySelector('.err');
+  /* The whole of what a keypress changes. No node is created or destroyed,
+     so nothing can take focus, lose it, or be re-laid-out under a finger. */
+  const paint=(err)=>{
+    $dots.forEach((d,i)=>d.classList.toggle('on', i<entry.length));
+    if(err!==undefined) $err.textContent=err||'';
   };
-  draw();
+  let busy=false;
+  $lock.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
+    if(busy) return;
+    const k=b.dataset.k;
+    if(k==='del'){ entry=entry.slice(0,-1); paint(''); return; }
+    if(entry.length>=4) return;
+    entry+=k; paint('');
+    if(entry.length===4){
+      /* The hash is async, so the fourth dot is already painted and taps are
+         held off until it answers — otherwise a fast fifth tap lands mid-check. */
+      busy=true;
+      const ok=(await sha(entry+settings.pinSalt))===settings.pinHash;
+      busy=false;
+      if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); maybeOfferRecoveryCode(); }
+      else{ entry=''; paint('Wrong PIN'); }
+    }
+  });
 }
 
 function setupPin(){
   let stage=1, first='', entry='';
-  const draw=(msg)=>{
-    sheet(`<h2>${settings.pinHash?'Change PIN':'Set a PIN'}</h2>
-      <div class="muted" style="text-align:center;margin-bottom:6px">${msg}</div>
-      <div class="dots" style="justify-content:center">${[0,1,2,3].map(i=>`<div class="d ${i<entry.length?'on':''}"></div>`).join('')}</div>
-      <div class="keypad" style="margin:14px auto 4px">${[1,2,3,4,5,6,7,8,9].map(n=>`<button data-k="${n}">${n}</button>`).join('')}<button class="blank"></button><button data-k="0">0</button><button data-k="del">⌫</button></div>`);
-    $mr.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
-      const k=b.dataset.k;
-      if(k==='del'){ entry=entry.slice(0,-1); draw(msg); return; }
-      if(entry.length>=4) return; entry+=k;
-      if(entry.length<4){ draw(msg); return; }
-      if(stage===1){ first=entry; entry=''; stage=2; draw('Re-enter to confirm'); }
-      else{ if(entry===first){ const salt=randSalt(); settings.pinSalt=salt; settings.pinHash=await sha(first+salt); persist.settings(); closeSheet(); render(); toast('App lock on'); }
-        else{ entry=''; stage=1; first=''; draw('Did not match — try again'); } }
-    });
+  /* PIN_STEADY — the sheet is built once. The old draw() called sheet() per
+     digit, which rebuilt the scrim as well as the keypad and re-registered the
+     scrim's click handler each time. This is the CHANGE-PIN path too.
+     Confirm-twice is unchanged: stage 1 takes the PIN, stage 2 demands it
+     again, and that is true whether the PIN is new or being changed. */
+  sheet(`<h2>${settings.pinHash?'Change PIN':'Set a PIN'}</h2>
+      <div class="muted" data-pin-msg style="text-align:center;margin-bottom:6px"></div>
+      <div class="dots" style="justify-content:center">${[0,1,2,3].map(()=>'<div class="d"></div>').join('')}</div>
+      <div class="keypad" style="margin:14px auto 4px">${PIN_KEYPAD_HTML}</div>`);
+  const $dots=[...$mr.querySelectorAll('.dots .d')];
+  const $msg=$mr.querySelector('[data-pin-msg]');
+  const paint=(msg)=>{
+    $dots.forEach((d,i)=>d.classList.toggle('on', i<entry.length));
+    if(msg!==undefined) $msg.textContent=msg;
   };
-  draw('Choose a 4-digit PIN');
+  paint('Choose a 4-digit PIN');
+  let busy=false;
+  $mr.querySelectorAll('[data-k]').forEach(b=>b.onclick=async()=>{
+    if(busy) return;
+    const k=b.dataset.k;
+    if(k==='del'){ entry=entry.slice(0,-1); paint(); return; }
+    if(entry.length>=4) return;
+    entry+=k; paint();
+    if(entry.length<4) return;
+    if(stage===1){ first=entry; entry=''; stage=2; paint('Re-enter to confirm'); return; }
+    if(entry===first){
+      busy=true;
+      const salt=randSalt(); settings.pinSalt=salt; settings.pinHash=await sha(first+salt);
+      persist.settings(); busy=false;
+      render(); toast('App lock on');
+      /* PIN_RECOVERY — a PIN with no way back is a trap. With no vault passphrase
+         to fall back on, the code is minted here, at the one moment the person is
+         already thinking about how they get in. */
+      if(!vaultExists() && !recoveryExists()){
+        settings.recoveryOfferedAt=now();
+        recoveryCodeSheet(await recoverySet(), false);
+      } else closeSheet();
+    } else {
+      entry=''; stage=1; first=''; paint('Did not match \u2014 try again');
+    }
+  });
 }
 
 /* ============================================================
