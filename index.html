@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.12-1247';</script>
+<script>window.EGS_VERSION = '2026.08.12-1326';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -1243,7 +1243,7 @@ function taskRow(t){
   const h=t.houseId?houseById(t.houseId):null;
   const icon=t.status==='done'?I.check:t.status==='doing'?I.dot:'';
   return `<div class="card task ${t.status==='done'?'is-done':''}" style="margin-bottom:8px">
-    <button class="punch ${t.status}" data-punch="${t.id}" aria-label="${STATUS_LABEL[t.status]} — tap to advance">${icon}</button>
+    <button class="punch ${esc(t.status)}" data-punch="${esc(t.id)}" aria-label="${esc(STATUS_LABEL[t.status]||t.status||'')} — tap to advance">${icon}</button>
     <div class="body" data-edit-task="${t.id}">
       <div class="ttext">${esc(vt(t.text))}</div>
       <div class="meta">${h?`<span class="h-tag">${esc(h.name)}</span>`:''}<span>${STATUS_LABEL[t.status]}</span></div>
@@ -1263,7 +1263,7 @@ function renderHouses(){
   const hasUncategorized=houses.some(h=>!categoryById(h.category));
   const filterChips=`<div class="row" style="gap:8px;flex-wrap:wrap;margin:12px 0 2px">
     <button class="chip-filter ${categoryFilter==='all'?'active':''}" data-cat-filter="all">All</button>
-    ${categories.map(c=>`<button class="chip-filter ${categoryFilter===c.id?'active':''}" data-cat-filter="${c.id}">${c.icon} ${esc(c.label)}</button>`).join('')}
+    ${categories.map(c=>`<button class="chip-filter ${categoryFilter===c.id?'active':''}" data-cat-filter="${esc(c.id)}">${esc(c.icon)} ${esc(c.label)}</button>`).join('')}
     ${hasUncategorized?`<button class="chip-filter ${categoryFilter==='__none__'?'active':''}" data-cat-filter="__none__">❓ Uncategorized</button>`:''}
     <button class="chip-filter" data-manage-categories>⚙️ Edit</button>
   </div>`;
@@ -1283,8 +1283,8 @@ function renderHouses(){
     return `<div class="card house-card" data-house="${h.id}">
       <div class="house-cover" ${cov?`data-cover="${cov}"`:''}>${cov?'':`<div class="blueprint"></div>${I.house}`}</div>
       <div class="hc-body"><div class="row"><div class="grow"><div class="hc-name">${esc(h.name)}</div>${h.address?`<div class="hc-addr truncate">${esc(h.address)}</div>`:''}</div>
-        <span class="cat-badge" title="${esc(categoryLabel(h.category))}">${categoryIcon(h.category)}</span>
-        <span class="chip status-${h.status}">${esc(h.status)}</span></div>
+        <span class="cat-badge" title="${esc(categoryLabel(h.category))}">${esc(categoryIcon(h.category))}</span>
+        <span class="chip status-${esc(h.status)}">${esc(h.status)}</span></div>
         <div class="meta mono" style="font-size:11px;color:var(--paper-faint);margin-top:8px">${jt?`${esc(jt)} · `:''}${(h.specs||[]).length} specs · ${(h.photos||[]).length} photos${open?` · ${open} open`:''}</div>
       </div></div>`;
   }).join(''):`<div class="empty" style="padding:40px 20px"><div class="t">No projects in this category</div><div>Switch categories above, or add a new one.</div></div>`;
@@ -1362,7 +1362,7 @@ function renderHouse(id){
   </div>
   <div class="wrap">
     <div class="house-cover" data-edit-cover="${h.id}" style="border-radius:var(--radius);overflow:hidden;margin-bottom:4px;cursor:pointer" ${cover?`data-cover="${cover}"`:''}>${cover?'':`<div class="blueprint"></div>${I.house}`}</div>
-    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${h.id}" style="cursor:pointer" title="Tap to move to another category">${categoryIcon(h.category)}</span><span class="chip status-${h.status}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${addr?`<span class="muted truncate" style="font-size:13px">${esc(addr)}</span>`:''}</div>
+    <div class="row" style="margin:10px 0 2px"><span class="cat-badge" data-open-cat-picker="${esc(h.id)}" style="cursor:pointer" title="Tap to move to another category">${esc(categoryIcon(h.category))}</span><span class="chip status-${esc(h.status)}">${esc(h.status)}</span>${h.jobType&&JOB_TYPE_LABEL[h.jobType]?`<span class="chip" style="color:var(--paper-dim)">${esc(JOB_TYPE_LABEL[h.jobType])}</span>`:''}${addr?`<span class="muted truncate" style="font-size:13px">${esc(addr)}</span>`:''}</div>
 
     ${specBlocks||''}
     <button class="btn block sm" data-add-spec style="margin:2px 0 4px">${I.plus} Add spec (paint, flooring, trim…)</button>
@@ -1896,7 +1896,7 @@ function openHouseSheet(edit=null){
   const h=edit||{};
   const cat=h.category||'construction';
   sheet(`<h2>${edit?'Edit project':'New project'}</h2>
-    <div class="field"><label>Category</label><select class="input" id="h-category">${categories.map(c=>`<option value="${c.id}" ${cat===c.id?'selected':''}>${c.icon} ${esc(c.label)}</option>`).join('')}</select></div>
+    <div class="field"><label>Category</label><select class="input" id="h-category">${categories.map(c=>`<option value="${esc(c.id)}" ${cat===c.id?'selected':''}>${esc(c.icon)} ${esc(c.label)}</option>`).join('')}</select></div>
     <div class="field"><label>Name</label><input class="input" id="h-name" placeholder="e.g. Maple St reno" value="${esc(h.name||'')}"></div>
     <div class="field"><label>Address (optional)</label><input class="input" id="h-addr" placeholder="123 Maple St" value="${esc(vt(h.address))}"></div>
     <div class="field"><label>Status</label><select class="input" id="h-status">${HOUSE_STATUS.map(s=>`<option ${h.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -1948,7 +1948,7 @@ function openHouseSheet(edit=null){
 function openCategoryPicker(houseId){
   const h=houseById(houseId); if(!h) return;
   sheet(`<h2>Move to category</h2>
-    ${categories.map(c=>`<button class="btn block" data-move-cat="${c.id}" style="justify-content:flex-start;gap:10px;margin-bottom:8px">${c.icon} ${esc(c.label)}${h.category===c.id?' '+I.check:''}</button>`).join('')}`);
+    ${categories.map(c=>`<button class="btn block" data-move-cat="${esc(c.id)}" style="justify-content:flex-start;gap:10px;margin-bottom:8px">${esc(c.icon)} ${esc(c.label)}${h.category===c.id?' '+I.check:''}</button>`).join('')}`);
   $mr.querySelectorAll('[data-move-cat]').forEach(b=>b.onclick=()=>{
     h.category=b.dataset.moveCat; h.updatedAt=now(); persist.houses(); closeSheet(); render(); toast('Moved to '+categoryLabel(h.category));
   });
@@ -1957,8 +1957,8 @@ function openCategoryPicker(houseId){
 function categoryRowsHtml(){
   return categories.map((c,i)=>`<div class="card" style="margin-bottom:8px;padding:10px">
     <div class="row" style="gap:8px;align-items:center">
-      <input class="input" style="width:50px;text-align:center;padding:8px;flex:none" value="${esc(c.icon)}" data-cat-icon="${c.id}" maxlength="4">
-      <input class="input grow" value="${esc(c.label)}" data-cat-label="${c.id}">
+      <input class="input" style="width:50px;text-align:center;padding:8px;flex:none" value="${esc(c.icon)}" data-cat-icon="${esc(c.id)}" maxlength="4">
+      <input class="input grow" value="${esc(c.label)}" data-cat-label="${esc(c.id)}">
     </div>
     <div class="row" style="gap:8px;margin-top:8px;justify-content:flex-end">
       <button class="btn sm" data-cat-up="${c.id}" ${i===0?'disabled':''}>\u2191</button>
@@ -3372,6 +3372,63 @@ async function saveAnnotation(){
 function blobToB64(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=()=>rej(r.error); r.readAsDataURL(blob); }); }
 function b64ToBlob(b64,type='image/jpeg'){ const bin=atob(b64); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return new Blob([a],{type}); }
 
+/* ============================================================
+   IMPORT_SAFE — a file is not a trusted input, whoever sent it.
+   Everything below runs on data that arrived from disk: a full backup, or
+   a shared project from another person. Escaping at the sinks is the
+   defence; this is the second layer, and the place where the thirty-odd
+   `data-*="${...id}"` attributes get covered once instead of thirty times.
+   Ids are REFERENTIAL — h.photos[], h.cover, t.houseId, n.houseId all
+   point at them — so a hostile id is refused, never rewritten: rewriting
+   would break the very references it appears in. Every id this app mints
+   is uid() or a short literal, so a real file always passes.
+   ============================================================ */
+const IMPORT_ID_RE     = /^[A-Za-z0-9._:-]{1,64}$/;
+const IMPORT_STATUS_RE = /^[a-z]{1,16}$/;
+function importOkId(v){ return typeof v==='string' && IMPORT_ID_RE.test(v); }
+function importOkStatus(v){ return v==null || v==='' || (typeof v==='string' && IMPORT_STATUS_RE.test(v)); }
+function importCap(v,max){ return String(v==null?'':v).slice(0,max); }
+
+/* Returns a human phrase naming the first bad value, or null when clean. */
+function importUnsafeField(d){
+  for(const c of (Array.isArray(d.categories)?d.categories:[])){
+    if(!c || typeof c!=='object' || !importOkId(c.id)) return 'a category id';
+  }
+  for(const h of (Array.isArray(d.houses)?d.houses:[])){
+    if(!h || typeof h!=='object' || !importOkId(h.id)) return 'a project id';
+    if(!importOkStatus(h.status)) return 'a project status';
+    if(h.cover!=null && !importOkId(h.cover)) return 'a cover photo id';
+    for(const pid of (Array.isArray(h.photos)?h.photos:[])) if(!importOkId(pid)) return 'a photo id';
+    for(const s of (Array.isArray(h.specs)?h.specs:[])){
+      if(!s || typeof s!=='object' || !importOkId(s.id)) return 'a spec id';
+    }
+  }
+  for(const t of (Array.isArray(d.tasks)?d.tasks:[])){
+    if(!t || typeof t!=='object' || !importOkId(t.id)) return 'a to-do id';
+    if(!importOkStatus(t.status)) return 'a to-do status';
+  }
+  for(const n of (Array.isArray(d.notes)?d.notes:[])){
+    if(!n || typeof n!=='object' || !importOkId(n.id)) return 'a note id';
+  }
+  for(const pid of Object.keys(d.photos||{})) if(!importOkId(pid)) return 'a photo id';
+  return null;
+}
+
+/* Ids are already proven safe by the time this runs; this coerces the two
+   free-text fields. The icon cap matches the in-app maxlength=4 exactly.
+   The label cap is deliberately loose — the in-app label field has no
+   maxlength, so a tight cap would silently truncate a legitimate name and
+   break byte-identical restore. Length is a sanity bound here, not the
+   defence; esc() at every sink is the defence. Key order is preserved so
+   a legitimate file still round-trips byte-for-byte. */
+function importSanitizeCategories(arr){
+  return arr.map(c=>({
+    id:    c.id,
+    label: importCap(c.label,200),
+    icon:  importCap(c.icon,4)
+  }));
+}
+
 /* CHUNK22_IMPORT_SHARED_PROJECT */
 async function importSharedProject(e){
   const file=e.target.files&&e.target.files[0]; if(!file) return;
@@ -3383,8 +3440,12 @@ async function importSharedProject(e){
     const newId=uid();
     const category=(typeof categoryById==='function'&&categoryById('construction'))?'construction':null;
     const nh={
-      id:newId, name:p.name, category,
-      status:p.status||'active', jobType:p.jobType||'',
+      /* IMPORT_SAFE — the ids here are all freshly minted below, so the risk
+         is the free-text and the status, which arrive verbatim from whoever
+         sent the file. status lands in a class attribute; anything that is
+         not a plain lowercase word is not a status. */
+      id:newId, name:importCap(p.name,200), category,
+      status:importOkStatus(p.status)&&p.status?p.status:'active', jobType:importCap(p.jobType,40),
       address:p.address||'', notes:p.notes||'',
       specs:(p.specs||[]).map(s=>({id:uid(),category:s.category,room:s.room,label:s.label,value:s.value,note:s.note,createdAt:now()})),
       photos:[], cover:null, createdAt:now(), updatedAt:now()
@@ -3600,6 +3661,15 @@ async function importData(e){
     if(d.app!=='notebuilt' && d.app!=='punchlist') throw new Error('Not a Notebuilt backup');
   }catch(err){ reset(); alert('Could not restore: '+err.message); return; }
 
+  /* IMPORT_SAFE — refuse a hostile value before the manifest is even shown,
+     so nothing on this device is touched and no passphrase is asked for. */
+  const badField=importUnsafeField(d);
+  if(badField){
+    reset();
+    alert('Could not restore: this file contains '+badField+' that is not a valid value.\n\n'
+         +'Nothing on this device was touched.');
+    return;
+  }
   const m=backupManifest(d);
   if(!confirm(backupManifestText(m)
       +'\nRestore REPLACES everything currently in the app with what is listed above.\n'
@@ -3669,7 +3739,7 @@ async function importData(e){
 
     /* BACKUP_V3 — a version 3 file carries these; a version 2 file does not,
        and what is on this device is then left exactly where it is. */
-    if(Array.isArray(d.categories) && d.categories.length){ categories=d.categories; persist.categories(); }
+    if(Array.isArray(d.categories) && d.categories.length){ categories=importSanitizeCategories(d.categories); persist.categories(); }
     const vaultBlock = keepVault || d.vault || null;
     if(d.settings && typeof d.settings==='object'){
       const next=Object.assign({}, d.settings);
