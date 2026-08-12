@@ -12,7 +12,7 @@
 importScripts('./sw_logic.js');   // provides self.EGS_SW
 
 const APP_NAME      = 'notebuilt';   // <-- the ONE line you change per app
-const CACHE_VERSION = '2026.08.12-1407';             // <-- egs-deploy.sh stamps this each deploy
+const CACHE_VERSION = '2026.08.12-1543';             // <-- egs-deploy.sh stamps this each deploy
 const CACHE = EGS_SW.cacheName(APP_NAME, CACHE_VERSION);
 
 // Offline shell. For single-file apps this is basically index.html + icons.
@@ -46,18 +46,11 @@ self.addEventListener('fetch', (e) => {
   const strategy = EGS_SW.strategyFor(req.mode, req.headers.get('accept'));
 
   if (strategy === 'network-first') {
-    // SW_DEADLINE — fresh HTML when online; cached HTML when offline OR when
-    // the network hangs without answering. The cache write is attached to the
-    // NETWORK promise, not to the race, so a response that arrives after the
-    // deadline still lands in the cache for the next launch.
-    const net = fetch(req)
-      .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res; });
-    net.catch(() => {});                               // a late failure is not an unhandled rejection
+    // Fresh HTML when online; cached HTML when offline.
     e.respondWith(
-      EGS_SW.raceTimeout(net, EGS_SW.NET_TIMEOUT_MS, () =>
-        caches.match(req)
-          .then((r) => r || caches.match('./index.html'))
-          .then((r) => r || net))                      // nothing cached at all: the network is all there is
+      fetch(req)
+        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res; })
+        .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
     );
     return;
   }
