@@ -32,7 +32,38 @@
   // A version stamp is YYYY.MM.DD-HHMM — human-readable, sortable, eyeball-able.
   function isValidVersion(v){ return /^\d{4}\.\d{2}\.\d{2}-\d{4}$/.test(v); }
 
-  var api = { cacheName:cacheName, staleCaches:staleCaches, strategyFor:strategyFor, isValidVersion:isValidVersion };
+  // SW_DEADLINE — network-first needs a deadline, not just a .catch().
+  // Offline is not the dangerous case: offline REJECTS, the catch fires, and
+  // the cached shell is served. The dangerous case is a network that neither
+  // answers nor fails — a captive portal, or an access point with no route
+  // out. There fetch() stays pending forever, the catch never runs, and the
+  // app hangs on launch with nothing on screen. Notebuilt hit this on real
+  // wifi. 3.5s: long enough that a slow-but-real connection still wins, short
+  // enough that nobody stares at a blank screen wondering.
+  var NET_TIMEOUT_MS = 3500;
+
+  // Resolve with the network if it answers in time, otherwise with fallback().
+  // A REJECTED network also takes the fallback immediately, so the old offline
+  // behaviour is preserved rather than reimplemented. Never rejects for want
+  // of a network. Timers are injectable so this is testable in node.
+  function raceTimeout(networkPromise, ms, fallbackFn, timers){
+    var T = timers || { set:setTimeout, clear:clearTimeout };
+    return new Promise(function(resolve){
+      var settled = false;
+      var id = T.set(function(){
+        if(settled) return; settled = true;
+        resolve(fallbackFn());
+      }, ms);
+      networkPromise.then(function(res){
+        if(settled) return; settled = true; T.clear(id); resolve(res);
+      }, function(){
+        if(settled) return; settled = true; T.clear(id); resolve(fallbackFn());
+      });
+    });
+  }
+
+  var api = { cacheName:cacheName, staleCaches:staleCaches, strategyFor:strategyFor, isValidVersion:isValidVersion,
+              NET_TIMEOUT_MS:NET_TIMEOUT_MS, raceTimeout:raceTimeout };
   if(typeof module !== 'undefined') module.exports = api;
   global.EGS_SW = api;
 
