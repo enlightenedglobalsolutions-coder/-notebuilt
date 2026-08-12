@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.11-1729';</script>
+<script>window.EGS_VERSION = '2026.08.12-1247';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -1635,6 +1635,38 @@ function calcShow(inch){
   if(measMode()==="metric"){ var mm=Math.round(inch*25.4); return (mm>=1000?(Math.round(mm/10)/100)+" m":mm+" mm"); }
   return calcFmt(inch);
 }
+/* CALC_STEADY — the result block for a mode, as HTML, or '' when the fields are
+   not all in yet. ONE definition, called by the full render AND by the surgical
+   repaint below, so the two can never drift. That matters more than it looks:
+   the alternative is the board-feet formula existing in two places. */
+function calcResultBlock(m){
+  var mode=measMode();
+  if(m==="tape"||m==="md"){
+    var A=CALC.a, res=null;
+    if(A!=null){
+      if(m==="tape"){ if(CALC.b!=null) res = CALC.op==="+"?A+CALC.b:A-CALC.b; }
+      else { var n=parseFloat(CALC.num); if(!isNaN(n)&&String(CALC.num).trim()!==""){ res = CALC.op==="*"?A*n:(n!==0?A/n:null); } }
+    }
+    return calcResult(res);          /* always present: reads "\u2014" when empty */
+  }
+  if(m==="bf"){
+    if(CALC.bf_t==null||CALC.bf_w==null||CALC.bf_l==null) return '';
+    var bf=(CALC.bf_t*CALC.bf_w*CALC.bf_l)/144;
+    return '<div class="cresult"><div class="muted">Board feet</div><div class="cbig">'+(Math.round(bf*100)/100)+' bf</div></div>';
+  }
+  if(m==="area"){
+    if(CALC.ar_w==null||CALC.ar_l==null) return '';
+    var sqin=CALC.ar_w*CALC.ar_l, sqft=sqin/144, sqm=sqin*0.00064516;
+    return '<div class="cresult"><div class="muted">Area</div><div class="cbig">'+(mode==="metric"?(Math.round(sqm*100)/100)+' m\u00b2':(Math.round(sqft*100)/100)+' sq ft')+'</div><div class="muted" style="margin-top:4px">'+(mode==="metric"?(Math.round(sqft*100)/100)+' sq ft':(Math.round(sqm*100)/100)+' m\u00b2')+'</div></div>';
+  }
+  if(m==="sq"){
+    if(CALC.sq_a==null||CALC.sq_b==null) return '';
+    var diag=Math.sqrt(CALC.sq_a*CALC.sq_a+CALC.sq_b*CALC.sq_b);
+    return '<div class="cresult"><div class="muted">Diagonal</div><div class="cbig">'+calcShow(diag)+'</div></div>';
+  }
+  return '';
+}
+
 function calcRecompute(){
   var wrap=$app.querySelector('.wrap'); if(!wrap) return;
   var slotOf={ "c-a":"a","c-b":"b","bf_t":"bf_t","bf_w":"bf_w","bf_l":"bf_l","ar_w":"ar_w","ar_l":"ar_l","sq_a":"sq_a","sq_b":"sq_b" };
@@ -1642,14 +1674,23 @@ function calcRecompute(){
     var slot=slotOf[root.getAttribute("data-meas")]; if(!slot) return;
     var echo=root.parentNode.querySelector('.cecho'); if(echo){ var v=CALC[slot]; echo.textContent=(v!=null)?measEcho(v,measMode()):""; }
   });
-  var old=wrap.querySelector('.cresult'); var m=CALC.mode;
-  // board-feet / area / square-up: value blocks depend on the result; simplest correct path is a full render
-  if(m==="bf"||m==="area"||m==="sq"){ render(); return; }
-  if(!old) { render(); return; }
-  var res=null;
-  if(m==="tape"){ if(CALC.a!=null&&CALC.b!=null) res=CALC.op==="+"?CALC.a+CALC.b:CALC.a-CALC.b; }
-  else if(m==="md"){ if(CALC.a!=null){ var n=parseFloat(CALC.num); if(!isNaN(n)&&String(CALC.num).trim()!==""){ res=CALC.op==="*"?CALC.a*n:(n!==0?CALC.a/n:null); } } }
-  var tmp=document.createElement('div'); tmp.innerHTML=calcResult(res); old.replaceWith(tmp.firstChild);
+  /* CALC_STEADY — repaint ONLY the result block.
+     This used to call render() for bf/area/sq, because in those modes .cresult
+     is absent until every field is filled and there was nothing to replaceWith.
+     A full render rebuilds $app, which demolished the input under the user's
+     finger: focus fell to <body> and the phone keyboard dismissed on every
+     digit. Create, replace or remove the one block in place and the boxes are
+     never touched. */
+  var m=CALC.mode, html=calcResultBlock(m), old=wrap.querySelector('.cresult');
+  if(!html){ if(old) old.remove(); return; }
+  var tmp=document.createElement('div'); tmp.innerHTML=html;
+  var node=tmp.firstChild;
+  if(old){ old.replaceWith(node); return; }
+  /* First moment it can be shown: it belongs after the last measurement field,
+     ahead of the trailing hint that closes .wrap. */
+  var fields=wrap.querySelectorAll('.field');
+  if(fields.length) fields[fields.length-1].insertAdjacentElement('afterend', node);
+  else wrap.appendChild(node);
 }
 function renderCalc(){
   var m=CALC.mode, mode=measMode();
@@ -1659,43 +1700,32 @@ function renderCalc(){
   var body="";
   if(m==="tape"||m==="md"){
     var ops = m==="tape" ? [["+","+"],["\u2212","-"]] : [["\u00d7","*"],["\u00f7","/"]];
-    var A=CALC.a, res=null;
-    if(A!=null){
-      if(m==="tape"){ if(CALC.b!=null) res = CALC.op==="+"?A+CALC.b:A-CALC.b; }
-      else { var n=parseFloat(CALC.num); if(!isNaN(n)&&CALC.num.trim()!==""){ res = CALC.op==="*"?A*n:(n!==0?A/n:null); } }
-    }
     body=''
     +'<div class="field"><label>'+(m==="tape"?"First measurement":"Measurement")+'</label>'+measWidget("c-a",CALC.a,mode)+'<span class="cecho">'+(CALC.a!=null?measEcho(CALC.a,mode):"")+'</span></div>'
     +'<div class="crow">'+ops.map(function(o){return '<button class="btn '+(CALC.op===o[1]?'primary':'')+'" data-calc-op="'+o[1]+'">'+o[0]+'</button>';}).join("")+'</div>'
     +(m==="tape"
        ? '<div class="field"><label>Second measurement</label>'+measWidget("c-b",CALC.b,mode)+'<span class="cecho">'+(CALC.b!=null?measEcho(CALC.b,mode):"")+'</span></div>'
        : '<div class="field"><label>'+(CALC.op==="*"?"Times (number)":"Divide by (number)")+'</label><input class="input" id="c-num" inputmode="decimal" value="'+esc(CALC.num)+'" placeholder="3" autocomplete="off"></div>')
-    +calcResult(res);
+    +calcResultBlock(m);
   } else if(m==="bf"){
-    var bf=null;
-    if(CALC.bf_t!=null&&CALC.bf_w!=null&&CALC.bf_l!=null) bf=(CALC.bf_t*CALC.bf_w*CALC.bf_l)/144;
     body=''
     +'<p class="muted" style="font-size:13px;margin:0 0 10px">Board feet = thickness \u00d7 width \u00d7 length \u00f7 144.</p>'
     +calcMField("bf_t","Thickness",CALC.bf_t,mode)
     +calcMField("bf_w","Width",CALC.bf_w,mode)
     +calcMField("bf_l","Length",CALC.bf_l,mode)
-    +(bf!=null?'<div class="cresult"><div class="muted">Board feet</div><div class="cbig">'+(Math.round(bf*100)/100)+' bf</div></div>':'');
+    +calcResultBlock("bf");
   } else if(m==="area"){
-    var sqft=null,sqin=null,sqm=null;
-    if(CALC.ar_w!=null&&CALC.ar_l!=null){ sqin=CALC.ar_w*CALC.ar_l; sqft=sqin/144; sqm=sqin*0.00064516; }
     body=''
     +'<p class="muted" style="font-size:13px;margin:0 0 10px">Area from width \u00d7 length.</p>'
     +calcMField("ar_w","Width",CALC.ar_w,mode)
     +calcMField("ar_l","Length",CALC.ar_l,mode)
-    +(sqft!=null?'<div class="cresult"><div class="muted">Area</div><div class="cbig">'+(mode==="metric"?(Math.round(sqm*100)/100)+' m\u00b2':(Math.round(sqft*100)/100)+' sq ft')+'</div><div class="muted" style="margin-top:4px">'+(mode==="metric"?(Math.round(sqft*100)/100)+' sq ft':(Math.round(sqm*100)/100)+' m\u00b2')+'</div></div>':'');
+    +calcResultBlock("area");
   } else if(m==="sq"){
-    var diag=null;
-    if(CALC.sq_a!=null&&CALC.sq_b!=null) diag=Math.sqrt(CALC.sq_a*CALC.sq_a+CALC.sq_b*CALC.sq_b);
     body=''
     +'<p class="muted" style="font-size:13px;margin:0 0 10px">Diagonal (3-4-5 square check) \u2014 what a square layout should measure corner to corner.</p>'
     +calcMField("sq_a","Side A",CALC.sq_a,mode)
     +calcMField("sq_b","Side B",CALC.sq_b,mode)
-    +(diag!=null?'<div class="cresult"><div class="muted">Diagonal</div><div class="cbig">'+calcShow(diag)+'</div></div>':'');
+    +calcResultBlock("sq");
   }
   return '<div class="topbar"><div class="grow"><span class="eyebrow">'+esc(APP_NAME)+'</span><h1>Calculator</h1></div>'+unitTog+'</div>'
     +'<div class="wrap"><div style="display:flex;flex-wrap:wrap;margin-bottom:10px">'+tabhtml+'</div>'+body
