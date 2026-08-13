@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.13-1355';</script>
+<script>window.EGS_VERSION = '2026.08.13-1434';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -890,24 +890,40 @@ async function unlockActivate(rawKey){
     return {ok:true, idMissing:!id};
   }
   const det=unlockErrorDetail(body);
+  const t=det.toLowerCase();
+  /* Status only where it means one thing on its own. */
   if(res.status===404) return {ok:false, kind:'unknown'};
-  /* The exact status for an exhausted key has not been seen from a real
-     one. Match on what it says as well as what it returns, so the clear
-     message survives either answer. */
-  if(res.status===403 || /activation limit|limit reached|already activated/i.test(det))
+  if(res.status===422) return {ok:false, kind:'malformed', detail:det};
+  if(res.status>=500)  return {ok:false, kind:'server', detail:det, status:res.status};
+  /* Polar answers 403 NotPermitted for a whole family of refusals — a spent
+     key, a disabled one, a revoked benefit. Reading the status alone told a
+     customer with a GRANTED 0/3 key that they were out of devices, and told
+     them to stop trying. So the limit message is reachable only when the
+     server actually says limit. */
+  if(/activation limit|limit already reached|limit reached/.test(t))
     return {ok:false, kind:'limit', detail:det};
-  return {ok:false, kind:'other', detail:det, status:res.status};
+  if(/revoked|disabled|not active|inactive|no longer valid|expired/.test(t))
+    return {ok:false, kind:'inactive', detail:det};
+  /* Refused for a reason we have not learned to name. Say so, and show what
+     was said, rather than reaching for the nearest message that fits. */
+  return {ok:false, kind:'refused', detail:det, status:res.status};
 }
 
 function unlockErrorText(r){
   if(r.kind==='empty')   return 'Enter the key from your email.';
   if(r.kind==='offline') return 'Activating needs the internet for a moment — the one time Notebuilt ever asks. Your key is still here: tap Try again once you are back online.';
   if(r.kind==='unknown') return 'That key was not recognised. Copy the whole line out of the email, dashes and all.';
+  if(r.kind==='malformed') return 'The server could not read that as a key. Copy the whole line out of the email — it should look like '+((UNLOCK.KEY_PREFIX?UNLOCK.KEY_PREFIX+'-':'')+'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX')+'. Nothing was used up.';
+  if(r.kind==='server')   return 'The activation server is having trouble right now (error '+(r.status||'5xx')+')'+(r.detail?' — '+r.detail:'')+'. Nothing was used up. Try again in a minute.';
+  if(r.kind==='inactive') return 'The server says this key is not currently active'+(r.detail?' \u2014 \u201c'+r.detail+'\u201d':'')+'. Nothing was used up. If it was just re-enabled, give it a moment and tap again; if it stays this way, contact EGS with the email you bought it with.';
+  if(r.kind==='refused')  return 'The server refused the activation'+(r.status?' (error '+r.status+')':'')+(r.detail?' \u2014 \u201c'+r.detail+'\u201d':'')+'. Nothing was used up. Tap again if you like; if it keeps saying this, send that message to EGS and it will be diagnosed from it.';
   if(r.kind==='spent')    return 'An activation was already used a moment ago, so Notebuilt will not send another — that would spend a second one for nothing. Close the app, reopen it, and look at Settings: if the Unlock row says Unlocked, you are done. If it still says Free, write your key down and contact EGS.';
   if(r.kind==='unstored') return 'Your key worked — the server accepted it and this device is unlocked now. But it could not be saved here ('+(r.why||'unknown reason')+'), so it may not survive closing the app. Do NOT tap Activate again: that would spend another activation for nothing. Write your key down, then reopen and check Settings — if it still says Free, contact EGS before trying again.';
   if(r.kind==='crashed')  return 'Something went wrong after the request was sent, so it is not certain whether an activation was used'+(r.detail?' ('+r.detail+')':'')+'. Do not tap again yet. Close this, open Settings, and look at the Unlock row — if it says Unlocked, you are done.';
   if(r.kind==='limit')   return 'This key has already been activated on all of its devices. You do not need a second one — restoring a Notebuilt backup carries the unlock across without using a slot.';
-  return 'Could not activate just now'+(r.detail?' — '+r.detail:(r.status?' (error '+r.status+')':''))+'. Your key is still here; try again in a moment.';
+  /* Nothing routes here any more — every refusal is named above — but a
+     future kind must not inherit a reassuring sentence by accident. */
+  return 'Could not activate just now'+(r.detail?' — '+r.detail:(r.status?' (error '+r.status+')':''))+'. Nothing was used up; your key is still here.';
 }
 
 /* resume=true means they were stopped mid-action at the cap, so finishing
