@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.13-1434';</script>
+<script>window.EGS_VERSION = '2026.08.13-1757';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -814,6 +814,28 @@ function unlockSpentBefore(){
   catch(e){ return null; }
 }
 
+/* The endpoint that fits a key carrying no activation limit. Polar refuses
+   /activate outright for such a key, and validation is what its own docs
+   point at instead. Returns the license record only when the server states
+   the key is granted, so nothing here is taken on trust: a disabled or
+   revoked key answers with some other status and unlocks nothing.
+   increment_usage is deliberately absent — a key with a usage allowance
+   must not have it spent down by unlocking. */
+async function unlockValidate(key){
+  let res;
+  try{
+    res=await fetch(UNLOCK.API_BASE+'/v1/customer-portal/license-keys/validate',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ key:key, organization_id:UNLOCK.ORG_ID })
+    });
+  }catch(e){ return null; }
+  if(!res.ok) return null;
+  let b=null; try{ b=await res.json(); }catch(e){}
+  if(b && b.status==='granted') return b;
+  return null;
+}
+
 /* Set the moment the server returns a 2xx, and never cleared. One
    activation can be spent per session; the UI may be wrong about what
    happened, but the money cannot be spent twice on account of it. */
@@ -902,6 +924,19 @@ async function unlockActivate(rawKey){
      server actually says limit. */
   if(/activation limit|limit already reached|limit reached/.test(t))
     return {ok:false, kind:'limit', detail:det};
+  /* Not a limit. The most likely reason by far is that this key carries no
+     activation limit at all, in which case /activate was never the right
+     call and validation is. Ask the server directly rather than guessing
+     from the wording: it unlocks only if it answers "granted", so a
+     disabled or revoked key falls through to the honest message below. */
+  const lic=await unlockValidate(key);
+  if(lic){
+    settings.unlock={ key:key, activationId:'validated-'+(lic.id||now()),
+                      activatedAt:now(), viaValidation:true };
+    const wrote=unlockPersistVerified();
+    if(!wrote.ok) return {ok:false, kind:'unstored', why:wrote.why};
+    return {ok:true, viaValidation:true};
+  }
   if(/revoked|disabled|not active|inactive|no longer valid|expired/.test(t))
     return {ok:false, kind:'inactive', detail:det};
   /* Refused for a reason we have not learned to name. Say so, and show what
