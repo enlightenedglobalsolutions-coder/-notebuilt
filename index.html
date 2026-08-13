@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.13-1321';</script>
+<script>window.EGS_VERSION = '2026.08.13-1355';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -697,11 +697,51 @@ houses.forEach(h=>{ if(!h.category) h.category='construction'; });
 let tasks  = load(K.tasks,[]);
 let notes  = load(K.notes,[]);
 let pendingNoteHouseId=null;
-let settings = load(K.settings,{ pinHash:null, pinSalt:null });
+/* settings carries the vault salt and verifier, the PIN, the recovery
+   credential and the unlock — the four things in this app that cannot be
+   reconstructed from anything else. So an unreadable settings blob must
+   never be quietly swapped for defaults: the next write would put those
+   defaults over the only copy, which is precisely how a bad launch turns
+   into permanent deletion. Missing is a fresh install. Unparseable is an
+   emergency, and the two are not the same. */
+let settingsUnreadable=false;
+function loadSettings(){
+  let raw=null;
+  try{ raw=localStorage.getItem(K.settings); }catch(e){}
+  if(raw==null||raw==='') return { pinHash:null, pinSalt:null };   /* fresh install */
+  try{ return JSON.parse(raw); }catch(e){}
+  /* The durability guard has been mirroring every good write into a twin.
+     Nothing writes settings at startup any more, so that twin is still the
+     last good copy at this point rather than a casualty of this launch. */
+  try{
+    const bak=localStorage.getItem(K.settings+'_bak');
+    if(bak){ const v=JSON.parse(bak); console.warn('Notebuilt: settings recovered from the backup copy'); return v; }
+  }catch(e){}
+  /* Both copies unreadable. Keep what is on disk exactly as it is — it is
+     the only remaining evidence — and refuse to write over it. */
+  settingsUnreadable=true;
+  return { pinHash:null, pinSalt:null };
+}
+let settings = loadSettings();
 if(!settings.sortHouses) settings.sortHouses='updated';
 if(!settings.units) settings.units='imperial';
+/* Omission is not deletion. `unlock` is a purchase and `vault` is the only
+   way back into protected projects; neither may be dropped by a write that
+   simply did not know about it. An explicit null still switches either off,
+   so turning the vault off and restoring a vault-less backup both behave as
+   before — only a field that is absent entirely gets carried forward. */
+function saveSettings(){
+  if(settingsUnreadable) return;          /* never overwrite the damaged original */
+  let prev=null;
+  try{ prev=JSON.parse(localStorage.getItem(K.settings)||'null'); }catch(e){}
+  if(prev){
+    if(settings.unlock===undefined && prev.unlock && prev.unlock.activationId) settings.unlock=prev.unlock;
+    if(settings.vault===undefined  && prev.vault)  settings.vault =prev.vault;
+  }
+  save(K.settings,settings);
+}
 const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
-                  notes:()=>save(K.notes,notes), settings:()=>save(K.settings,settings),
+                  notes:()=>save(K.notes,notes), settings:saveSettings,
                   categories:()=>save(K.categories,categories) };
 
 /* ============================================================
@@ -778,6 +818,18 @@ function unlockSpentBefore(){
    activation can be spent per session; the UI may be wrong about what
    happened, but the money cannot be spent twice on account of it. */
 let unlockSpent=false;
+
+/* Both copies of settings were unreadable. The app is running on defaults
+   and refusing to save any of them, so nothing is being made worse — but
+   the vault, the PIN and the unlock are all in that file, and staying quiet
+   about it is how someone discovers it months later. */
+if(settingsUnreadable){
+  /* Noticed at all, without blocking the app the way a modal at launch
+     would. The lasting surface is the card in Settings below — this state
+     does not go away until a backup is restored, so the notice should not
+     either. */
+  setTimeout(()=>{ try{ toast('Saved settings could not be read \u2014 see Settings'); }catch(e){} }, 1800);
+}
 
 /* Write it, then read it straight back. A settings write that throws, or
    that silently fails to land, must never pass for a recorded purchase:
@@ -949,8 +1001,12 @@ function unlockThanks(resume,info){
   $mr.querySelector('#u-done').onclick=()=>{ closeSheet(); if(resume) openHouseSheet(); };
 }
 
-/* Recorded on the first run of the capped build, before anything can ask. */
-unlockPriorProjects();
+/* Deliberately NOT called at startup. It writes, and a write at startup is
+   what turned an unreadable settings blob into a deleted one: the fallback
+   defaults have no priorProjects, so this fired on the first bad launch and
+   persisted them over the real record. It stamps lazily instead — from the
+   pitch, which is user-initiated, and from importData for a restored file.
+   Nothing about the app's startup may write settings. */
 
 const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(36).slice(2));
 const now = ()=> Date.now();
@@ -2021,6 +2077,12 @@ function renderSettings(){
   const locked=!!settings.pinHash;
   return `<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Settings</h1></div></div>
   <div class="wrap">
+    ${settingsUnreadable?`<div class="card" style="border:1px solid var(--danger,#b5453b);margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px">Your saved settings could not be read</div>
+      <div class="muted" style="font-size:13px;line-height:1.6">Your projects, notes, to-dos and photos are safe and untouched. What is in that file is your app lock, your vault passphrase record, your recovery code and your unlock.<br><br>
+      Nothing has been overwritten — the damaged file is being left exactly as it is, and Notebuilt has stopped saving settings so it stays that way. Restore your most recent backup to put it right.<br><br>
+      Until then, changes on this screen will not be remembered.</div>
+    </div>`:''}
     <div class="sec-head"><span class="label">Security</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>App lock</div><div class="muted" style="font-size:13px">${locked?'A PIN is required to open the app.':'Off — anyone with the phone can open it.'}</div></div>
       <button class="btn sm" data-pin>${locked?'Change':'Set PIN'}</button></div>
