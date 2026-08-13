@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.13-1011';</script>
+<script>window.EGS_VERSION = '2026.08.13-1321';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -764,6 +764,36 @@ function unlockErrorDetail(b){
   return typeof b.error==='string'?b.error:'';
 }
 
+/* A spend that outlived its session. Its own tiny key: settings is the
+   write that fails first under pressure, and the durability guard mirrors
+   every CRIT key into a `_bak` twin, so putting this there would double
+   exactly the cost that is already too high. */
+const UNLOCK_SPENT_KEY='notebuilt.unlockSpent';
+function unlockSpentBefore(){
+  try{ const v=JSON.parse(localStorage.getItem(UNLOCK_SPENT_KEY)||'null'); return (v&&v.at)?v:null; }
+  catch(e){ return null; }
+}
+
+/* Set the moment the server returns a 2xx, and never cleared. One
+   activation can be spent per session; the UI may be wrong about what
+   happened, but the money cannot be spent twice on account of it. */
+let unlockSpent=false;
+
+/* Write it, then read it straight back. A settings write that throws, or
+   that silently fails to land, must never pass for a recorded purchase:
+   the activation behind it is already spent and cannot be spent twice. The
+   reason is carried out verbatim, because "it did not save" is a support
+   ticket and "QuotaExceededError" is a fix. */
+function unlockPersistVerified(){
+  try{ persist.settings(); }
+  catch(e){ return {ok:false, why:(e&&e.name)||'the write failed'}; }
+  try{
+    const back=JSON.parse(localStorage.getItem(K.settings)||'null');
+    if(!(back && back.unlock && back.unlock.activationId)) return {ok:false, why:'it did not persist'};
+  }catch(e){ return {ok:false, why:(e&&e.name)||'it could not be read back'}; }
+  return {ok:true};
+}
+
 /* THE ONLY NETWORK CALL IN THIS APP. It happens when a person taps
    Activate, and at no other moment — not at launch, not on a timer, not
    to re-check afterwards. Nothing about the person or their data is sent:
@@ -771,6 +801,9 @@ function unlockErrorDetail(b){
 async function unlockActivate(rawKey){
   const key=unlockNormalizeKey(rawKey);
   if(!key) return {ok:false, kind:'empty'};
+  /* An activation has already been spent in this session. Whatever the
+     screen says, another request can only spend another one. */
+  if(unlockSpent) return {ok:false, kind:'spent'};
   /* Asked while plainly offline, say so without a doomed request first. */
   if(navigator.onLine===false) return {ok:false, kind:'offline'};
   let res;
@@ -781,11 +814,28 @@ async function unlockActivate(rawKey){
       body:JSON.stringify({ key:key, organization_id:UNLOCK.ORG_ID, label:UNLOCK.LABEL })
     });
   }catch(e){ return {ok:false, kind:'offline'}; }
-  let body=null; try{ body=await res.json(); }catch(e){}
-  if(res.ok && body && body.id){
-    settings.unlock={ key:key, activationId:body.id, activatedAt:now() };
-    persist.settings();
-    return {ok:true};
+  let body=null; try{ const raw=await res.text(); body=raw?JSON.parse(raw):null; }catch(e){}
+  /* A 2xx means the server has already spent one of the activations. That
+     is the fact that matters and it is true whatever the body turns out to
+     look like, so success is decided on the status and the id is dug out
+     afterwards, best effort. Deciding it on a field name instead is how a
+     paid activation gets discarded and the customer invited to buy the
+     next one with another slot. */
+  if(res.ok){
+    /* Latched before anything below can throw, because from here a slot is
+       gone whether or not the rest of this function succeeds. */
+    unlockSpent=true;
+    /* Before the settings write, and independent of whether that survives:
+       this is the record that stops the next launch spending another. */
+    try{ localStorage.setItem(UNLOCK_SPENT_KEY, JSON.stringify({at:now()})); }catch(e){}
+    const id=(body && (body.id || body.activation_id || (body.activation && body.activation.id))) || null;
+    settings.unlock={ key:key, activationId:(id || 'unrecorded-'+now()), activatedAt:now() };
+    if(!id) settings.unlock.idMissing=true;
+    /* Kept in memory above whatever happens below: the session was paid
+       for and works now, even if this device refuses to remember it. */
+    const wrote=unlockPersistVerified();
+    if(!wrote.ok) return {ok:false, kind:'unstored', why:wrote.why};
+    return {ok:true, idMissing:!id};
   }
   const det=unlockErrorDetail(body);
   if(res.status===404) return {ok:false, kind:'unknown'};
@@ -801,6 +851,9 @@ function unlockErrorText(r){
   if(r.kind==='empty')   return 'Enter the key from your email.';
   if(r.kind==='offline') return 'Activating needs the internet for a moment — the one time Notebuilt ever asks. Your key is still here: tap Try again once you are back online.';
   if(r.kind==='unknown') return 'That key was not recognised. Copy the whole line out of the email, dashes and all.';
+  if(r.kind==='spent')    return 'An activation was already used a moment ago, so Notebuilt will not send another — that would spend a second one for nothing. Close the app, reopen it, and look at Settings: if the Unlock row says Unlocked, you are done. If it still says Free, write your key down and contact EGS.';
+  if(r.kind==='unstored') return 'Your key worked — the server accepted it and this device is unlocked now. But it could not be saved here ('+(r.why||'unknown reason')+'), so it may not survive closing the app. Do NOT tap Activate again: that would spend another activation for nothing. Write your key down, then reopen and check Settings — if it still says Free, contact EGS before trying again.';
+  if(r.kind==='crashed')  return 'Something went wrong after the request was sent, so it is not certain whether an activation was used'+(r.detail?' ('+r.detail+')':'')+'. Do not tap again yet. Close this, open Settings, and look at the Unlock row — if it says Unlocked, you are done.';
   if(r.kind==='limit')   return 'This key has already been activated on all of its devices. You do not need a second one — restoring a Notebuilt backup carries the unlock across without using a slot.';
   return 'Could not activate just now'+(r.detail?' — '+r.detail:(r.status?' (error '+r.status+')':''))+'. Your key is still here; try again in a moment.';
 }
@@ -832,7 +885,13 @@ function unlockPitch(resume){
 }
 
 function unlockKeySheet(prefill,resume){
+  /* An activation already went out from this device and was never recorded.
+     Say so before the tap, not after it. */
+  const spent=(!unlockIsOn() && unlockSpentBefore());
+  let spentOn='';
+  if(spent){ try{ spentOn=new Date(spent.at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }catch(e){} }
   sheet('<h2>Enter your key</h2>'
+    +(spent?'<div class="card" style="background:var(--ink-2);margin-bottom:12px"><div class="muted" style="font-size:13px;line-height:1.6">An activation was already used from this device'+(spentOn?' on '+esc(spentOn):'')+', but it was never saved here. Your key has a limited number of activations, and tapping Activate will spend another one.<br><br>If Settings still shows <b style="color:var(--paper)">Free</b>, contact EGS before spending it — the used one can be released instead.</div></div>':'')
     +'<div class="muted" style="font-size:13px;line-height:1.6;margin-bottom:12px">It arrives by email as soon as you buy. Capitals, spaces and dashes do not matter.</div>'
     +'<div class="field"><input class="input" id="u-key" placeholder="'+(UNLOCK.KEY_PREFIX?UNLOCK.KEY_PREFIX+'-':'')+'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" value="'+esc(prefill||'')+'"></div>'
     +'<div class="err" id="u-err"></div>'
@@ -844,8 +903,28 @@ function unlockKeySheet(prefill,resume){
   go.onclick=async()=>{
     err.textContent='';
     go.disabled=true; go.textContent='Activating\u2026';
-    const r=await unlockActivate(inp.value);
-    if(r.ok){ closeSheet(); render(); unlockThanks(resume); return; }
+    /* Nothing below may throw its way out of this handler. An exception
+       here leaves the button stuck mid-spin with no message, which reads as
+       a dead tap — and a dead tap is what makes a person close the sheet
+       and spend another activation. */
+    let r;
+    try{ r=await unlockActivate(inp.value); }
+    catch(e){ r={ok:false, kind:'crashed', detail:(e&&(e.name||e.message))||'unexpected error'}; }
+    if(r.ok){
+      /* A render fault must not make a stored, paid unlock look like
+         nothing happened. */
+      try{ closeSheet(); render(); }catch(e){}
+      unlockThanks(resume,r);
+      return;
+    }
+    /* A refusal that never reached a successful activation is safe to
+       retry, and still offers it. One that did is not: the slot is already
+       spent, so the button is retired instead of re-armed. */
+    if(r.kind==='unstored' || r.kind==='crashed' || r.kind==='spent'){
+      go.disabled=true; go.textContent='Do not tap again';
+      err.textContent=unlockErrorText(r);
+      return;
+    }
     /* The typed key stays in the field. Losing it to an error message is
        how a person gives up on a thing they have already paid for. */
     go.disabled=false; go.textContent=(r.kind==='offline')?'Try again':'Activate';
@@ -854,13 +933,17 @@ function unlockKeySheet(prefill,resume){
   };
 }
 
-function unlockThanks(resume){
+function unlockThanks(resume,info){
+  /* Recorded, working, and honest about the one thing that was odd. */
+  const quirk=(info&&info.idMissing)
+    ? '<br><br>Recorded on this device, though the server did not send back an activation reference. Worth mentioning to EGS if you ever need support.'
+    : '';
   sheet('<h2>Unlocked</h2>'
     +'<div class="muted" style="font-size:13.5px;line-height:1.62">'
       +'Unlimited projects, from now on.<br><br>'
       +'That was the only time Notebuilt will contact anything. It will not check again — not at launch, not ever.<br><br>'
       +'Your key sits in your settings, so your next backup carries it. Restore that onto a new phone and it stays unlocked, without spending an activation.<br><br>'
-      +'Thank you — this is what keeps EGS building.'
+      +'Thank you — this is what keeps EGS building.'+quirk
     +'</div>'
     +'<button class="btn primary block" id="u-done" style="margin-top:14px">'+(resume?'New project':'Done')+'</button>');
   $mr.querySelector('#u-done').onclick=()=>{ closeSheet(); if(resume) openHouseSheet(); };
