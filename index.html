@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.13-1757';</script>
+<script>window.EGS_VERSION = '2026.08.14-0746';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -260,7 +260,10 @@
   .nav button svg{width:23px;height:23px}
 
   /* ---- Sheet / modal ---- */
-  .scrim{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+  /* 80 clears #viewer (60) and #annotate (70), which sheets are legitimately
+     opened from, and stays below #lock (100), #vault (110), #camera (115) and
+     #vault-busy (120) — the surfaces that must never have a sheet over them. */
+  .scrim{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
   .sheet{
     background:var(--ink-2);width:100%;max-width:680px;margin:0 auto;
     border-radius:20px 20px 0 0;border-top:1px solid var(--line);
@@ -1484,6 +1487,38 @@ async function photoURL(id){
   const u=URL.createObjectURL(blob); _objUrls.set(id,u); return u;
 }
 
+/* PHOTO_SHARE — the bytes, decrypted in memory, for a share payload or a
+   download the person has asked for. Deliberately NOT routed through
+   photoURL()'s object-URL cache: this hands the plaintext to another app,
+   so it is written out explicitly here rather than borrowing a handle that
+   exists for putting pixels on screen. Same lock rules as photoURL: a
+   sealed photo needs the vault open, and a photo captured while locked and
+   not yet resealed needs the envelope key. Nothing plaintext is persisted
+   anywhere by this function. */
+async function photoBlobFor(id){
+  const rec=await photoGet(id); if(!rec) return null;
+  if(isEncPhoto(rec)){
+    if(!_vaultKey) return null;
+    try{ const pt=await vaultOpenBytes(rec.iv, rec.ct);
+         return new Blob([pt],{type:rec.type||'image/jpeg'}); }catch(e){ return null; }
+  }
+  if(isEnvPhoto(rec)){
+    if(!_vaultPriv) return null;
+    try{ const pt=await vaultEnvelopeOpen(rec);
+         return new Blob([pt],{type:rec.type||'image/jpeg'}); }catch(e){ return null; }
+  }
+  return rec.blob||null;
+}
+
+/* A name carrying a timestamp and nothing else. Not the project, not the
+   photo id, not a storage key — a filename travels with the file. */
+function photoOutName(){
+  const d=new Date();
+  const p=n=>String(n).padStart(2,'0');
+  return 'notebuilt-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())
+         +'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds())+'.jpg';
+}
+
 /* ---------- helpers ---------- */
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),1900); }
 const houseById = id=> houses.find(h=>h.id===id);
@@ -1719,9 +1754,14 @@ function renderHouse(id){
   const photos=photosFor(id,id);
   const photoGrid=`<div class="sec-head"><span class="label">Photos</span><span class="rule"></span><span class="count">${photos.length}</span></div>
     <div class="photo-grid">
-      ${h.protected
-        ? `<button class="photo-add" data-open-camera="${h.id}" aria-label="Take photo">${I.camera}<span>Camera</span></button>`
-        : `<label class="photo-add" aria-label="Take photo">${I.camera}<span>Camera</span><input type="file" accept="image/*" capture="environment" hidden data-add-photo></label>`}
+      <!-- CAM_MULTISHOT — the in-app viewfinder for every project, not just
+           protected ones. Handing an unprotected project to the phone's
+           camera app meant Android drew the confirm, Android closed the
+           camera after one frame, and a jobsite visit cost ten round trips.
+           It is also the hand-off the intro screen already names as where
+           photos get lost. Library still uses the file picker: that is
+           choosing files that already exist, not capturing. -->
+      <button class="photo-add" data-open-camera="${h.id}" aria-label="Take photo">${I.camera}<span>Camera</span></button>
       <label class="photo-add" aria-label="Choose from library">${I.images}<span>Library</span><input type="file" accept="image/*" multiple hidden data-add-photo></label>
       ${photos.map(pid=>`<div class="ph" data-photo="${pid}"><button class="x" data-del-photo="${pid}" aria-label="Remove photo">${I.x}</button></div>`).join('')}
     </div>`;
@@ -2997,7 +3037,8 @@ function camDrawLive(){
     +'<div class="cam-stage"><video id="cam-video" playsinline autoplay muted></video></div>'
     +'<div class="cam-controls">'+lensRow+presetRow
     +'<div class="cam-shutter-row"><button class="cam-shutter" data-cam-shoot aria-label="Take photo"></button></div>'
-    +'<div class="cam-hint">'+(multi?'Pick a lens · ':'')+'Tap Max for full resolution</div>'
+    +'<div class="cam-hint">'+(cam.kept?cam.kept+(cam.kept===1?' photo':' photos')+' saved · ':'')
+    +(multi?'Pick a lens · ':'')+'Tap Max for full resolution</div>'
     +'</div>';
   const v=document.getElementById('cam-video');
   if(v && cam.stream){ v.srcObject=cam.stream; v.play().catch(()=>{}); }
@@ -3011,10 +3052,18 @@ function camDrawReview(){
     +'<div class="cam-stage"><img class="cam-still" src="'+cam.shot.url+'" alt="Captured photo"></div>'
     +'<div class="cam-controls">'
     +'<div class="cam-hint" style="padding-bottom:10px">'
-    +esc(cam.shot.w+' × '+cam.shot.h+' · '+PHOTO_PRESETS[cam.presetKey].label)+'</div>'
-    +'<div class="row" style="gap:10px">'
+    +esc(cam.shot.w+' × '+cam.shot.h+' · '+PHOTO_PRESETS[cam.presetKey].label)
+    +(cam.kept?' · '+cam.kept+' saved so far':'')+'</div>'
+    /* Said, not swallowed: Max asked the sensor and the sensor declined, so
+       this frame is the preview's size. The chip stays on Max for the next
+       one, which may well succeed. */
+    +(cam.shot.maxMissed
+        ? '<div class="cam-warn" style="margin-bottom:10px">Max was not available for this shot, so it was taken at viewfinder resolution. Max is still selected for the next one.</div>'
+        : '')
+    +'<button class="btn primary block" data-cam-keep-more>Keep &amp; take another</button>'
+    +'<div class="row" style="gap:10px;margin-top:10px">'
     +'<button class="btn" style="flex:1" data-cam-retake>Retake</button>'
-    +'<button class="btn primary" style="flex:1" data-cam-keep>Keep</button></div></div>';
+    +'<button class="btn" style="flex:1" data-cam-keep-done>Keep &amp; done</button></div></div>';
   camBind();
 }
 
@@ -3027,18 +3076,27 @@ async function camGrabFrame(){
 }
 
 async function camShoot(){
+  /* CAM_MULTISHOT — one shot in flight at a time. Without this a second tap
+     while the still is being prepared produces a second record for a frame
+     the person only took once. */
+  if(cam.saving || cam.shot) return;
   const btn=$camera.querySelector('[data-cam-shoot]'); if(btn) btn.setAttribute('disabled','');
   let blob=null;
-  if(cam.presetKey==='max' && cam.imageCapture){
+  const wantedMax=(cam.presetKey==='max');
+  let gotMax=false;
+  if(wantedMax && cam.imageCapture){
     /* full sensor resolution where the browser offers it */
-    try{ blob=await cam.imageCapture.takePhoto(); }catch(e){ blob=null; }
+    try{ blob=await cam.imageCapture.takePhoto(); gotMax=!!blob; }catch(e){ blob=null; }
   }
+  /* The fallback is a canvas grab of the PREVIEW — viewfinder resolution,
+     not sensor resolution. It used to happen silently, so Max could quietly
+     deliver a Standard-sized frame. The review screen now says so. */
   if(!blob) blob=await camGrabFrame();
   if(!blob){ if(btn) btn.removeAttribute('disabled'); toast('Could not capture that frame'); return; }
   const url=URL.createObjectURL(blob);
   const dims=await new Promise(res=>{ const im=new Image();
     im.onload=()=>res({w:im.naturalWidth,h:im.naturalHeight}); im.onerror=()=>res({w:0,h:0}); im.src=url; });
-  cam.shot={ blob, url, w:dims.w, h:dims.h };
+  cam.shot={ blob, url, w:dims.w, h:dims.h, maxMissed:(wantedMax && !gotMax) };
   camDrawReview();
 }
 
@@ -3051,13 +3109,22 @@ function camRetake(){
 /* The captured frame goes down the SAME write path as everything else:
    photoPutFor() seals it symmetrically when unlocked and envelopes it when
    not, and the list is persisted immediately after. */
-async function camKeep(){
-  if(!cam.shot) return;
+async function camKeep(andAnother){
+  /* CAM_MULTISHOT — the latch, not the button state, is what guarantees one
+     record per shot. Disabling the buttons is cosmetic; a second call that
+     arrives anyway finds cam.saving already true and does nothing. */
+  if(!cam.shot || cam.saving) return;
   const houseId=cam.houseId, h=houseById(houseId);
   if(!h){ camClose(); return; }
-  const keepBtn=$camera.querySelector('[data-cam-keep]');
-  if(keepBtn){ keepBtn.setAttribute('disabled',''); keepBtn.textContent='Saving…'; }
+  cam.saving=true;
+  $camera.querySelectorAll('[data-cam-keep-more],[data-cam-keep-done],[data-cam-retake]')
+         .forEach(b=>b.setAttribute('disabled',''));
+  const pressed=$camera.querySelector(andAnother?'[data-cam-keep-more]':'[data-cam-keep-done]');
+  if(pressed) pressed.textContent='Saving\u2026';
   try{
+    /* Unchanged from single-shot: sealed symmetrically when unlocked,
+       enveloped when not, and the list persisted before anything else
+       happens. On disk before the viewfinder returns — nothing is carried. */
     const blob=await preparePhotoBlob(cam.shot.blob, cam.presetKey, true);
     const id=uid();
     await photoPutFor(houseId,{id,blob,houseId,createdAt:now()});
@@ -3065,11 +3132,19 @@ async function camKeep(){
     if(!h.cover) h.cover=id;
     h.updatedAt=now(); persist.houses();
     if(cam.shot.url){ try{ URL.revokeObjectURL(cam.shot.url); }catch(e){} }
-    cam.shot=null;
-    toast('Photo saved');
-    camDrawLive();                       /* straight back to the viewfinder */
+    cam.shot=null; cam.saving=false;
+    cam.kept=(cam.kept||0)+1;            /* a count, never the photos */
+    if(andAnother){
+      toast(cam.kept===1?'Photo saved':cam.kept+' photos saved');
+      camDrawLive();                     /* same stream, no re-acquire */
+    } else {
+      camClose();                        /* teardown on exit, as before */
+    }
   }catch(err){
-    if(keepBtn){ keepBtn.removeAttribute('disabled'); keepBtn.textContent='Keep'; }
+    /* Redraw rather than hand-restore labels: the shot is still here, and
+       the review screen is the one true description of that state. */
+    cam.saving=false;
+    camDrawReview();
     toast(String(err&&err.message)==='no capture key'
       ? 'Unlock the vault once to turn on locked capture'
       : 'Could not save that photo');
@@ -3082,7 +3157,10 @@ function camBind(){
   if(allow) allow.onclick=async()=>{ camDrawLoading(); await camStart(); };
   const shoot=$camera.querySelector('[data-cam-shoot]'); if(shoot) shoot.onclick=camShoot;
   const retake=$camera.querySelector('[data-cam-retake]'); if(retake) retake.onclick=camRetake;
-  const keep=$camera.querySelector('[data-cam-keep]'); if(keep) keep.onclick=camKeep;
+  /* Arrows, not bare references: `onclick=camKeep` would pass the click
+     event as andAnother, and an event object is truthy. */
+  const keepMore=$camera.querySelector('[data-cam-keep-more]'); if(keepMore) keepMore.onclick=()=>camKeep(true);
+  const keepDone=$camera.querySelector('[data-cam-keep-done]'); if(keepDone) keepDone.onclick=()=>camKeep(false);
   $camera.querySelectorAll('[data-cam-lens]').forEach(b=>b.onclick=async()=>{
     camDrawLoading(); await camStart(b.getAttribute('data-cam-lens'));
   });
@@ -3366,6 +3444,7 @@ async function renderViewerFrame(){
         <button class="icon-btn" data-v-cover aria-label="Set as project cover">${I.star}</button>
         <button class="icon-btn" data-v-rotate aria-label="Rotate photo">${I.rotate}</button>
         <button class="icon-btn" data-v-markup aria-label="Add markup">${I.edit}</button>
+        <button class="icon-btn" data-v-send aria-label="Share or save photo">${I.share}</button>
         <button class="icon-btn danger" data-v-del aria-label="Delete photo">${I.trash}</button>
       </div>
     </div>
@@ -3376,9 +3455,68 @@ async function renderViewerFrame(){
   $viewer.querySelector('[data-v-rotate]').onclick=rotatePhoto;
   $viewer.querySelector('[data-v-markup]').onclick=openAnnotate;
   $viewer.querySelector('[data-v-cover]').onclick=setViewerCover;
+  $viewer.querySelector('[data-v-send]').onclick=openPhotoSendSheet;
   const img=$viewer.querySelector('#v-img');
   const url=await photoURL(pid); if(url) img.src=url;
   bindViewerGestures();
+}
+
+/* PHOTO_SHARE — one sheet, because the two sentences that have to be read
+   before a photo leaves the app need somewhere to live, and because six
+   icon buttons do not fit the viewer's top row on a phone. */
+function openPhotoSendSheet(){
+  const pid=vw.photos[vw.index]; if(!pid) return;
+  const h=houseById(vw.houseId);
+  const prot=!!(h && h.protected);
+  sheet('<h2>Send this photo</h2>'
+    +(prot?'<div class="card" style="background:var(--ink-2);margin-bottom:12px"><div class="muted" style="font-size:13px;line-height:1.6">'
+        +'This project is protected. Sharing or saving sends an <b style="color:var(--paper)">unprotected copy out of the vault</b> \u2014 whatever receives it holds a plain photo that Notebuilt no longer controls.'
+        +'</div></div>':'')
+    +'<div class="muted" data-help="photo-send" style="font-size:13px;line-height:1.6;margin-bottom:12px">'
+    +'Share hands the image to another app on this phone. Save puts it in your <b style="color:var(--paper)">Downloads</b> folder \u2014 not the camera roll.'
+    +'</div>'
+    +'<button class="btn primary block" data-ph-share>'+I.share+' Share\u2026</button>'
+    +'<button class="btn block" style="margin-top:10px" data-ph-save>'+I.download+' Save to device</button>'
+    +'<button class="btn block" style="margin-top:10px" data-ph-cancel>Cancel</button>');
+  $mr.querySelector('[data-ph-cancel]').onclick=closeSheet;
+  $mr.querySelector('[data-ph-share]').onclick=()=>sendViewerPhoto(true);
+  $mr.querySelector('[data-ph-save]').onclick=()=>sendViewerPhoto(false);
+}
+
+async function sendViewerPhoto(wantShare){
+  const pid=vw.photos[vw.index]; if(!pid) return;
+  const h=houseById(vw.houseId);
+  const prot=!!(h && h.protected);
+  /* Said once, plainly, and confirmed — an unprotected copy in another app
+     cannot be called back. */
+  if(prot && !confirm('Send an unprotected copy out of the vault?\n\n'
+      +'The photo leaves encrypted storage as an ordinary image. Whatever receives it keeps it.')) return;
+  const blob=await photoBlobFor(pid);
+  if(!blob){
+    closeSheet();
+    toast(prot?'Unlock the vault to send this photo':'Could not read that photo');
+    return;
+  }
+  const file=new File([blob], photoOutName(), {type:blob.type||'image/jpeg'});
+  if(wantShare && navigator.canShare && navigator.share){
+    let ok=false;
+    try{ ok=navigator.canShare({files:[file]}); }catch(e){ ok=false; }
+    if(ok){
+      closeSheet();
+      /* SHARE_PAYLOAD — the image and nothing else. No title, no text, no
+         url: none of them are the photo, and all of them would carry
+         something about where it came from. */
+      try{ await navigator.share({files:[file]}); }
+      catch(err){ if(!(err && err.name==='AbortError')) toast('Could not share that photo'); }
+      return;
+    }
+    toast('Sharing files is not available here \u2014 saving instead');
+  }
+  closeSheet();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=file.name; a.click();
+  setTimeout(()=>{ try{ URL.revokeObjectURL(a.href); }catch(e){} },1000);
+  toast('Saved to your Downloads folder');
 }
 
 async function deleteViewerPhoto(){
@@ -4225,6 +4363,7 @@ const RECOVERY_LEN=16;   /* 16 chars from 32 symbols = 80 bits */
 /* PIN_RECOVERY — info-mode copy, planted now so info mode inherits it. */
 const HELP_COPY={
   'pin-recovery':'Your PIN keeps casual hands out of the app. It does not encrypt anything \u2014 the vault passphrase does.',
+  'photo-send':'Share hands the image straight to another app on this phone \u2014 your workforce app, a message, email. Save to device puts a copy in your Downloads folder, which is not the same place as your camera roll; your gallery may not show it. Only the picture is sent: no project name, no address, nothing about where it was taken. From a protected project, both of these take the photo out of the vault as an ordinary unprotected image, and whatever receives it keeps it \u2014 which is why it asks first, and why it needs the vault open to do it at all.',
   'unlock':'Free covers three projects, with every feature switched on \u2014 photos, the vault, backups, the calculator. Unlocking lifts the limit on how many projects you keep, once, for one payment. Entering your key sends it to our payment provider a single time to activate it; after that Notebuilt never contacts anything again, and the unlock is never re-checked. The key is stored in your settings, so your backup carries it to your next phone.'
 };
 
