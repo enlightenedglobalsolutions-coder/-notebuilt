@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.14-0746';</script>
+<script>window.EGS_VERSION = '2026.08.14-1356';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -511,6 +511,14 @@
     white-space:nowrap;flex:none;
   }
   .cam-chip.on{background:var(--brass);border-color:var(--brass);color:#231a07}
+  /* CAM_TORCH — same footprint as the spacer opposite it, so the shutter
+     stays centred whether or not this lens has a lamp. */
+  .cam-flash{
+    width:46px;height:46px;border-radius:50%;display:grid;place-items:center;flex:none;
+    border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--paper-dim);
+  }
+  .cam-flash.on{background:var(--brass);border-color:var(--brass);color:#231a07}
+  .cam-flash svg{width:22px;height:22px}
   #camera .cam-shutter-row{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:4px}
   .cam-shutter{
     width:70px;height:70px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.35);
@@ -653,6 +661,9 @@ const I = {
   download:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>',
   upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9m0 0 4 4m-4-4-4 4M5 4h14"/></svg>',
   lock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
+  /* CAM_TORCH — filled when the lamp is on, outline with a slash when off. */
+  bolt:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13 2 5 14h5l-1 8 8-12h-5l1-8z"/></svg>',
+  boltOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13 2 5 14h5l-1 8 8-12h-5l1-8z"/><path d="M3 3l18 18"/></svg>',
   /* VAULT_EYE */
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg>',
   eyeOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 6.6A9.9 9.9 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a18 18 0 0 1-3.1 3.9M6.2 8.1A18 18 0 0 0 2 12s3.6 6.5 10 6.5a9.8 9.8 0 0 0 3.5-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>',
@@ -2895,6 +2906,16 @@ let cam={ open:false, houseId:null, stream:null, imageCapture:null,
 function camStop(){
   /* Complete teardown: tracks stopped, srcObject cleared, references dropped.
      A live indicator light after leaving the viewfinder is not acceptable. */
+  /* CAM_TORCH — the lamp goes out here, and therefore on every exit: close,
+     cancel, lens switch, backgrounding and pagehide all arrive through this
+     function. Not awaited, because this is synchronous and pagehide gives
+     nothing to wait in; the t.stop() below is the hard guarantee, since a
+     released track releases the lamp with it. */
+  try{
+    const _t=cam.stream && cam.stream.getVideoTracks && cam.stream.getVideoTracks()[0];
+    if(_t && cam.torchOn){ try{ _t.applyConstraints({advanced:[{torch:false}]}); }catch(e){} }
+  }catch(e){}
+  cam.torchOn=false; cam.torchCap=false; cam.fillFlash=false;
   try{ if(cam.stream) cam.stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} }); }catch(e){}
   cam.stream=null; cam.imageCapture=null;
   const v=document.getElementById('cam-video');
@@ -2983,6 +3004,11 @@ function camDrawError(err){
 }
 
 async function camStart(deviceId){
+  /* CAM_TORCH — read the wish before camStop() clears it, so switching lens
+     can carry the lamp over. Backgrounding deliberately does not: camStop
+     runs on its own there, the flag is already false by the time we return,
+     and the torch comes back off. */
+  const wantTorch=!!cam.torchOn;
   camStop();
   const base={ width:{ideal:4096}, height:{ideal:4096} };
   const video = deviceId ? Object.assign({deviceId:{exact:deviceId}}, base)
@@ -3003,8 +3029,44 @@ async function camStart(deviceId){
      stream carries. Only worth it at Max. */
   cam.imageCapture=null;
   try{ if(window.ImageCapture && track) cam.imageCapture=new ImageCapture(track); }catch(e){}
+  /* CAM_TORCH — capability belongs to THIS track. Front cameras and several
+     rear lenses have no lamp; the button is absent for those rather than
+     greyed, because a disabled flash button invites a tap that cannot work. */
+  cam.torchCap=false; cam.fillFlash=false;
+  try{ const caps=(track && track.getCapabilities) ? track.getCapabilities() : null;
+       cam.torchCap=!!(caps && caps.torch); }catch(e){}
+  /* A capability probe is not worth a viewfinder that never opens: raced,
+     because a promise that neither resolves nor rejects is exactly how
+     2026.08.12-1407 hung this app on launch. */
+  try{
+    if(cam.imageCapture && cam.imageCapture.getPhotoCapabilities){
+      const pc=await Promise.race([
+        cam.imageCapture.getPhotoCapabilities().catch(()=>null),
+        new Promise(r=>setTimeout(()=>r(null),800))
+      ]);
+      const modes=pc && pc.fillLightMode;
+      cam.fillFlash=!!(modes && modes.indexOf && modes.indexOf('flash')>=0);
+    }
+  }catch(e){ cam.fillFlash=false; }
+  if(wantTorch && cam.torchCap) await camSetTorch(true);
   await camListDevices();
   camDrawLive();
+}
+
+/* CAM_TORCH — the only writer of cam.torchOn while a track is live. A refusal
+   leaves the flag false, so the button always describes the lamp rather than
+   the request. */
+async function camSetTorch(on){
+  const track=cam.stream && cam.stream.getVideoTracks ? cam.stream.getVideoTracks()[0] : null;
+  if(!track || !cam.torchCap) return false;
+  try{
+    await track.applyConstraints({advanced:[{torch:!!on}]});
+    cam.torchOn=!!on;
+    return true;
+  }catch(e){
+    cam.torchOn=false;
+    return false;
+  }
 }
 
 /* Only what the device genuinely exposes. Labels are blank until permission has
@@ -3036,7 +3098,14 @@ function camDrawLive(){
     +'<span style="width:46px"></span></div>'
     +'<div class="cam-stage"><video id="cam-video" playsinline autoplay muted></video></div>'
     +'<div class="cam-controls">'+lensRow+presetRow
-    +'<div class="cam-shutter-row"><button class="cam-shutter" data-cam-shoot aria-label="Take photo"></button></div>'
+    +'<div class="cam-shutter-row">'
+    +(cam.torchCap
+        ? '<button class="cam-flash'+(cam.torchOn?' on':'')+'" data-cam-torch aria-pressed="'+(cam.torchOn?'true':'false')
+          +'" aria-label="'+(cam.torchOn?'Turn flash off':'Turn flash on')+'">'+(cam.torchOn?I.bolt:I.boltOff)+'</button>'
+        : '')
+    +'<button class="cam-shutter" data-cam-shoot aria-label="Take photo"></button>'
+    +(cam.torchCap?'<span style="width:46px;flex:none"></span>':'')
+    +'</div>'
     +'<div class="cam-hint">'+(cam.kept?cam.kept+(cam.kept===1?' photo':' photos')+' saved · ':'')
     +(multi?'Pick a lens · ':'')+'Tap Max for full resolution</div>'
     +'</div>';
@@ -3085,8 +3154,13 @@ async function camShoot(){
   const wantedMax=(cam.presetKey==='max');
   let gotMax=false;
   if(wantedMax && cam.imageCapture){
-    /* full sensor resolution where the browser offers it */
-    try{ blob=await cam.imageCapture.takePhoto(); gotMax=!!blob; }catch(e){ blob=null; }
+    /* full sensor resolution where the browser offers it. CAM_TORCH — where
+       the device offers a genuine flash burst, ask for it rather than leaning
+       on the lamp; everywhere else the torch is already lighting the scene
+       and covers both modes. */
+    const opts=(cam.torchOn && cam.fillFlash) ? {fillLightMode:'flash'} : null;
+    try{ blob=await (opts ? cam.imageCapture.takePhoto(opts) : cam.imageCapture.takePhoto());
+         gotMax=!!blob; }catch(e){ blob=null; }
   }
   /* The fallback is a canvas grab of the PREVIEW — viewfinder resolution,
      not sensor resolution. It used to happen silently, so Max could quietly
@@ -3156,6 +3230,13 @@ function camBind(){
   const allow=$camera.querySelector('[data-cam-allow]');
   if(allow) allow.onclick=async()=>{ camDrawLoading(); await camStart(); };
   const shoot=$camera.querySelector('[data-cam-shoot]'); if(shoot) shoot.onclick=camShoot;
+  const torch=$camera.querySelector('[data-cam-torch]');
+  if(torch) torch.onclick=async()=>{
+    const want=!cam.torchOn;
+    const ok=await camSetTorch(want);
+    if(!ok && want) toast('This lens would not turn its flash on');
+    camDrawLive();                        /* redraw from the lamp, not the wish */
+  };
   const retake=$camera.querySelector('[data-cam-retake]'); if(retake) retake.onclick=camRetake;
   /* Arrows, not bare references: `onclick=camKeep` would pass the click
      event as andAnother, and an event object is truthy. */
