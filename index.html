@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.14-1356';</script>
+<script>window.EGS_VERSION = '2026.08.14-1525';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -518,6 +518,8 @@
     border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--paper-dim);
   }
   .cam-flash.on{background:var(--brass);border-color:var(--brass);color:#231a07}
+  /* Continuous light gets its own colour as well as its own glyph. */
+  .cam-flash.torch{background:var(--paper);border-color:var(--paper);color:#15181D}
   .cam-flash svg{width:22px;height:22px}
   #camera .cam-shutter-row{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:4px}
   .cam-shutter{
@@ -664,6 +666,9 @@ const I = {
   /* CAM_TORCH — filled when the lamp is on, outline with a slash when off. */
   bolt:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13 2 5 14h5l-1 8 8-12h-5l1-8z"/></svg>',
   boltOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13 2 5 14h5l-1 8 8-12h-5l1-8z"/><path d="M3 3l18 18"/></svg>',
+  /* A lamp, not a bolt: continuous light has to be told apart from a burst at
+     arm's length in sunlight, which colour alone does not do. */
+  torchOn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-.7 4.5H9.7z" fill="currentColor"/><path d="M9.7 6.5h4.6l.7 13a3 3 0 0 1-6 0z" fill="currentColor"/><path d="M19 4.5l2.5-1.5M19.5 9h3M19 13.5l2.5 1.5"/></svg>',
   /* VAULT_EYE */
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg>',
   eyeOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 6.6A9.9 9.9 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a18 18 0 0 1-3.1 3.9M6.2 8.1A18 18 0 0 0 2 12s3.6 6.5 10 6.5a9.8 9.8 0 0 0 3.5-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>',
@@ -2915,7 +2920,7 @@ function camStop(){
     const _t=cam.stream && cam.stream.getVideoTracks && cam.stream.getVideoTracks()[0];
     if(_t && cam.torchOn){ try{ _t.applyConstraints({advanced:[{torch:false}]}); }catch(e){} }
   }catch(e){}
-  cam.torchOn=false; cam.torchCap=false; cam.fillFlash=false;
+  cam.torchOn=false; cam.torchCap=false; cam.fillFlash=false; cam.flashMode='off';
   try{ if(cam.stream) cam.stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(e){} }); }catch(e){}
   cam.stream=null; cam.imageCapture=null;
   const v=document.getElementById('cam-video');
@@ -3008,7 +3013,7 @@ async function camStart(deviceId){
      can carry the lamp over. Backgrounding deliberately does not: camStop
      runs on its own there, the flag is already false by the time we return,
      and the torch comes back off. */
-  const wantTorch=!!cam.torchOn;
+  const wantMode=camFlashMode();
   camStop();
   const base={ width:{ideal:4096}, height:{ideal:4096} };
   const video = deviceId ? Object.assign({deviceId:{exact:deviceId}}, base)
@@ -3048,7 +3053,10 @@ async function camStart(deviceId){
       cam.fillFlash=!!(modes && modes.indexOf && modes.indexOf('flash')>=0);
     }
   }catch(e){ cam.fillFlash=false; }
-  if(wantTorch && cam.torchCap) await camSetTorch(true);
+  /* CAM_FLASH — a new track carries none of the old constraints. Put the mode
+     back on it, or drop to OFF where this lens has no lamp to put it on. */
+  if(!cam.torchCap) cam.flashMode='off';
+  else if(wantMode!=='off') await camSetFlashMode(wantMode);
   await camListDevices();
   camDrawLive();
 }
@@ -3056,6 +3064,16 @@ async function camStart(deviceId){
 /* CAM_TORCH — the only writer of cam.torchOn while a track is live. A refusal
    leaves the flag false, so the button always describes the lamp rather than
    the request. */
+/* CAM_FLASH — the gap between striking the lamp and reading the sensor.
+   Too short and the frame is dark, or blown as auto-exposure over-corrects
+   after the fact. The brief's band is 250-400ms; this is the middle of it and
+   is expected to be tuned on a real device. */
+const FLASH_SETTLE_MS=300;
+
+/* off -> flash -> torch -> off */
+const FLASH_MODES=['off','flash','torch'];
+function camFlashMode(){ return cam.flashMode||'off'; }
+
 async function camSetTorch(on){
   const track=cam.stream && cam.stream.getVideoTracks ? cam.stream.getVideoTracks()[0] : null;
   if(!track || !cam.torchCap) return false;
@@ -3067,6 +3085,22 @@ async function camSetTorch(on){
     cam.torchOn=false;
     return false;
   }
+}
+
+/* CAM_FLASH — the mode, and the framing light that follows from it. Only
+   TORCH lights the viewfinder; FLASH stays dark until the shutter, which is
+   the whole difference between the two. A lens with no lamp cannot hold a
+   mode at all. */
+async function camSetFlashMode(mode){
+  if(!cam.torchCap){ cam.flashMode='off'; return false; }
+  cam.flashMode=mode;
+  const wantLit=(mode==='torch');
+  if(wantLit!==!!cam.torchOn){
+    const ok=await camSetTorch(wantLit);
+    /* Asked for light and refused: say off, because that is what is true. */
+    if(!ok && wantLit){ cam.flashMode='off'; return false; }
+  }
+  return true;
 }
 
 /* Only what the device genuinely exposes. Labels are blank until permission has
@@ -3100,8 +3134,15 @@ function camDrawLive(){
     +'<div class="cam-controls">'+lensRow+presetRow
     +'<div class="cam-shutter-row">'
     +(cam.torchCap
-        ? '<button class="cam-flash'+(cam.torchOn?' on':'')+'" data-cam-torch aria-pressed="'+(cam.torchOn?'true':'false')
-          +'" aria-label="'+(cam.torchOn?'Turn flash off':'Turn flash on')+'">'+(cam.torchOn?I.bolt:I.boltOff)+'</button>'
+        ? (function(){
+            const m=camFlashMode();
+            const cls = m==='torch' ? ' on torch' : (m==='flash' ? ' on' : '');
+            const gly = m==='torch' ? I.torchOn : (m==='flash' ? I.bolt : I.boltOff);
+            const lab = m==='off'   ? 'Flash off \u2014 tap for flash'
+                      : m==='flash' ? 'Flash on \u2014 tap for torch'
+                      :               'Torch on \u2014 tap to turn off';
+            return '<button class="cam-flash'+cls+'" data-cam-torch aria-label="'+lab+'" title="'+lab+'">'+gly+'</button>';
+          })()
         : '')
     +'<button class="cam-shutter" data-cam-shoot aria-label="Take photo"></button>'
     +(cam.torchCap?'<span style="width:46px;flex:none"></span>':'')
@@ -3153,19 +3194,44 @@ async function camShoot(){
   let blob=null;
   const wantedMax=(cam.presetKey==='max');
   let gotMax=false;
-  if(wantedMax && cam.imageCapture){
-    /* full sensor resolution where the browser offers it. CAM_TORCH — where
-       the device offers a genuine flash burst, ask for it rather than leaning
-       on the lamp; everywhere else the torch is already lighting the scene
-       and covers both modes. */
-    const opts=(cam.torchOn && cam.fillFlash) ? {fillLightMode:'flash'} : null;
-    try{ blob=await (opts ? cam.imageCapture.takePhoto(opts) : cam.imageCapture.takePhoto());
-         gotMax=!!blob; }catch(e){ blob=null; }
+  /* CAM_FLASH — a real burst is better than anything done by hand: no settle
+     delay, no lamp to remember to extinguish. Only worth it at Max, through a
+     genuine ImageCapture, on a device that advertises it. */
+  const useBurst=(wantedMax && cam.imageCapture && camFlashMode()==='flash' && cam.fillFlash);
+  /* Did THIS shot strike the lamp? Only then may it put it out — a capture
+     taken under TORCH must never darken the light it was taken under. */
+  let litForShot=false;
+  try{
+    if(camFlashMode()==='flash' && !useBurst){
+      litForShot=await camSetTorch(true);
+      /* Read the sensor before the lamp arrives and the frame is dark, or
+         blown once auto-exposure catches up. */
+      if(litForShot) await new Promise(r=>setTimeout(r,FLASH_SETTLE_MS));
+    }
+    if(wantedMax && cam.imageCapture){
+      /* full sensor resolution where the browser offers it. */
+      const opts=useBurst ? {fillLightMode:'flash'} : null;
+      try{ blob=await (opts ? cam.imageCapture.takePhoto(opts) : cam.imageCapture.takePhoto());
+           gotMax=!!blob; }catch(e){ blob=null; }
+    }
+    /* The fallback is a canvas grab of the PREVIEW — viewfinder resolution,
+       not sensor resolution. It used to happen silently, so Max could quietly
+       deliver a Standard-sized frame. The review screen now says so. */
+    if(!blob) blob=await camGrabFrame();
+  } catch(err){
+    /* A capture that throws used to leave the function with the shutter still
+       disabled, so the camera looked frozen until it was closed and reopened.
+       Say what happened and let the person try again. */
+    blob=null;
+    toast('Could not capture that frame');
+  } finally {
+    /* The point of the wrapper: a capture that throws still puts the light
+       out. A phone left burning is worse than a photo not taken. The shutter
+       belongs here for the same reason — it is state that must be released
+       whether or not the capture worked. */
+    if(litForShot) await camSetTorch(false);
+    if(btn) btn.removeAttribute('disabled');
   }
-  /* The fallback is a canvas grab of the PREVIEW — viewfinder resolution,
-     not sensor resolution. It used to happen silently, so Max could quietly
-     deliver a Standard-sized frame. The review screen now says so. */
-  if(!blob) blob=await camGrabFrame();
   if(!blob){ if(btn) btn.removeAttribute('disabled'); toast('Could not capture that frame'); return; }
   const url=URL.createObjectURL(blob);
   const dims=await new Promise(res=>{ const im=new Image();
@@ -3232,9 +3298,9 @@ function camBind(){
   const shoot=$camera.querySelector('[data-cam-shoot]'); if(shoot) shoot.onclick=camShoot;
   const torch=$camera.querySelector('[data-cam-torch]');
   if(torch) torch.onclick=async()=>{
-    const want=!cam.torchOn;
-    const ok=await camSetTorch(want);
-    if(!ok && want) toast('This lens would not turn its flash on');
+    const next=FLASH_MODES[(FLASH_MODES.indexOf(camFlashMode())+1)%FLASH_MODES.length];
+    const ok=await camSetFlashMode(next);
+    if(!ok) toast('This lens would not turn its flash on');
     camDrawLive();                        /* redraw from the lamp, not the wish */
   };
   const retake=$camera.querySelector('[data-cam-retake]'); if(retake) retake.onclick=camRetake;
