@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.14-1542';</script>
+<script>window.EGS_VERSION = '2026.08.14-1606';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -2675,7 +2675,7 @@ function renderPrivacy(){
   </div>
   <div class="wrap">
     <div class="sec-head"><span class="label">What we collect</span><span class="rule"></span></div>
-    <div class="card muted" style="font-size:13.5px;line-height:1.6">Nothing. No account, no sign-up, no email. We don't know who you are, and we don't track what you do in this app.</div>
+    <div class="card muted" style="font-size:13.5px;line-height:1.6">Nothing. No account, no sign-up, no email. We don't know who you are, and we don't track what you do in this app.<br><br>The one exception lives outside the app: if you buy the unlock, Polar — who handle the payment — ask for an email at checkout to send your key. That email stays with Polar; like any store, we can see who bought in their dashboard, but it never enters Notebuilt and is never tied to anything you do here.</div>
 
     <div class="sec-head"><span class="label">Where your data lives</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">On this device only — your projects, photos, notes and to-dos are stored in your phone's own storage. We never receive a copy. There's no server for it to go to.</div>
@@ -3658,7 +3658,7 @@ function openPhotoSendSheet(){
         +'This project is protected. Sharing or saving sends an <b style="color:var(--paper)">unprotected copy out of the vault</b> \u2014 whatever receives it holds a plain photo that Notebuilt no longer controls.'
         +'</div></div>':'')
     +'<div class="muted" data-help="photo-send" style="font-size:13px;line-height:1.6;margin-bottom:12px">'
-    +'Share hands the image to another app on this phone. Save puts it in your <b style="color:var(--paper)">Downloads</b> folder \u2014 not the camera roll.'
+    +'Share, hands the image to another app on this phone. Save, puts it in your <b style="color:var(--paper)">Downloads</b> folder \u2014 not the camera roll.'
     +'</div>'
     +'<button class="btn primary block" data-ph-share>'+I.share+' Share\u2026</button>'
     +'<button class="btn block" style="margin-top:10px" data-ph-save>'+I.download+' Save to device</button>'
