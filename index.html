@@ -8,7 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<script>window.EGS_VERSION = '2026.08.14-1606';</script>
+<!-- EGS-STD:coldopen-version -->
+<script>window.EGS_VERSION = '2026.08.15-0934';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -79,6 +80,10 @@
   .muted{color:var(--paper-dim)}
   .faint{color:var(--paper-faint)}
   .mono{font-family:var(--mono)}
+  /* EGS-STD:coldopen-version — one look for the stamp, wherever it is drawn. */
+  .ver-stamp{font-family:var(--mono);text-align:center;font-size:10.5px;letter-spacing:.12em;
+    color:var(--paper-faint);margin:20px 0 4px}
+  #lock .ver-stamp{margin:18px 0 0}
 
   /* ---- Cards ---- */
   .card{
@@ -596,6 +601,11 @@ const PAYMENT_CONFIG = {
   wise: 'WISE_PAYMENT_LINK'
 };
 /* ============================================================
+   EGS-STD:gate — §2 row 9 lives here. All features free, three free
+   projects, one-time Polar key, unlock keyed on a completed activation
+   rather than on a key merely being present. The cap UI is a plain
+   banner and never a nag loop (Tier 1 rule 10).
+
    UNLOCK_CONFIG — every string and id the paid unlock needs, in one
    place, on purpose.
 
@@ -673,7 +683,34 @@ const I = {
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg>',
   eyeOff:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 6.6A9.9 9.9 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a18 18 0 0 1-3.1 3.9M6.2 8.1A18 18 0 0 0 2 12s3.6 6.5 10 6.5a9.8 9.8 0 0 0 3.5-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>',
 };
-const MARK = '<svg viewBox="0 0 64 64" fill="none"><rect x="2" y="2" width="60" height="60" rx="15" fill="#1C2027" stroke="#333A45"/><path d="M20 16v28h28" stroke="#D7A94B" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16h11M20 25h8M20 34h8" stroke="#D7A94B" stroke-width="3" stroke-linecap="round" opacity=".55"/><circle cx="44" cy="44" r="3.4" fill="#D7A94B"/></svg>';
+/* MARK — the shipped app icon, redrawn as vector for the four lock screens.
+   Geometry is icons/icon-512.png divided by 8, so the mark above the keypad
+   and the mark on the home screen are the same drawing. The PNGs are NOT
+   generated from this and must not be; they remain the source for the icon. */
+const MARK = '<svg viewBox="0 0 64 64" fill="none" aria-hidden="true">'
+ /* the plaque, in the icon's own ground colour */
+ +'<rect x="2" y="2" width="60" height="60" rx="15" fill="#1A1E25" stroke="#333A45"/>'
+ /* the seal: two rings and a square, a dot at each corner */
+ +'<g stroke="#D6A84B" fill="none">'
+   +'<circle cx="32" cy="32" r="23.34" stroke-width=".69"/>'
+   +'<circle cx="32" cy="32" r="21" stroke-width=".28"/>'
+   +'<rect x="13.66" y="13.66" width="36.69" height="36.69" stroke-width=".44"/>'
+ +'</g>'
+ +'<g fill="#D6A84B"><circle cx="13.66" cy="13.66" r=".5"/><circle cx="50.35" cy="13.66" r=".5"/>'
+   +'<circle cx="50.35" cy="50.35" r=".5"/><circle cx="13.66" cy="50.35" r=".5"/></g>'
+ /* the two serif posts */
+ +'<g fill="#C89F47" stroke="#0D1016" stroke-width=".5" stroke-linejoin="round">'
+   +'<path d="M18.75 14.88H28.5V17.88H26.75V46.13H28.5V49.13H18.75V46.13H20.5V17.88H18.75Z"/>'
+   +'<path d="M35.5 14.88H45.25V17.88H43.5V46.13H45.25V49.13H35.5V46.13H37.25V17.88H35.5Z"/></g>'
+ /* ruled like the pad they are cut from */
+ +'<g stroke="#92753B" stroke-width=".42">'
+   +'<path d="M20.5 21.81H26.75M20.5 25.31H26.75M20.5 28.81H26.75M20.5 32.31H26.75M20.5 35.81H26.75M20.5 39.31H26.75M20.5 42.81H26.75"/>'
+   +'<path d="M37.25 21.81H43.5M37.25 25.31H43.5M37.25 28.81H43.5M37.25 32.31H43.5M37.25 35.81H43.5M37.25 39.31H43.5M37.25 42.81H43.5"/></g>'
+ /* the diagonal plank, over both posts, crossing the frame at each end */
+ +'<path d="M24.61 12.85L45.01 47.59L39.53 50.96L18.95 16.28Z" fill="#F5CC74" stroke="#0D1016" stroke-width=".5" stroke-linejoin="round"/>'
+   +'<path d="M28.77 20.05L23.35 23.23M30.86 23.61L25.44 26.79M32.91 27.12L27.49 30.3M34.97 30.62L29.55 33.8M37.02 34.12L31.6 37.3M39.08 37.64L33.66 40.82M41.13 41.14L35.71 44.32" stroke="#8D7037" stroke-width=".42"/>'
+   +'<g fill="#0E1016"><circle cx="23.79" cy="17.76" r=".55"/><circle cx="40.37" cy="46.06" r=".55"/></g>'
+ +'</svg>';
 
 /* ---------- storage: localStorage JSON ---------- */
 /* EGS durability guard: persist + backup + self-heal + empty-overwrite protection */
@@ -1660,6 +1697,15 @@ function autosaveOpenNote(){
   }
 }
 let _lastAutosavedNewId=null;
+/* EGS-STD:coldopen-version — one source (window.EGS_VERSION), one renderer.
+   The stamp used to exist only inside renderSettings(), so a fresh visitor —
+   who lands on the to-do list, or on the keypad — could not answer "is this
+   the update?" without navigating into Settings first. That is not the first
+   screen, which is what the standard asks for. */
+function versionStamp(){
+  return '<div class="ver-stamp">'+esc(window.EGS_VERSION||'dev build')+'</div>';
+}
+
 function render(){
   autosaveOpenNote();                              // save the screen we're leaving
   // if a brand-new note was just autosaved, keep editing it as a real note
@@ -1671,7 +1717,7 @@ function render(){
   const r=({todo:renderToday,houses:renderHouses,house:renderHouse,notes:renderNotes,
             note:renderNote,settings:renderSettings,search:renderSearch,calc:renderCalc,
             housenotes:renderHouseNotes,privacy:renderPrivacy,support:renderSupport})[view.name]||renderToday;
-  $app.innerHTML=r(view.param);
+  $app.innerHTML=r(view.param)+versionStamp();   /* cold open lands here */
   bind();
   renderNav();
   renderFab();
@@ -2274,9 +2320,8 @@ function renderSettings(){
       Enlightened Global Solutions · on-device · one-time, no subscription.
     </div>
 
-    <!-- VERSION_STAMP — what egs-deploy.sh stamped, shown so "is it actually
-         updated?" is a question you can answer by looking. -->
-    <div class="mono" style="text-align:center;font-size:10.5px;letter-spacing:.12em;color:var(--paper-faint);margin:20px 0 4px">${esc(window.EGS_VERSION||'dev build')}</div>
+    <!-- VERSION_STAMP — drawn by render() now, from the one shared helper,
+         like every other screen. Settings kept a second copy; it does not. -->
   </div>`;
 }
 
@@ -4585,7 +4630,8 @@ function lockPrompt(o){
     +'<div class="lock-actions">'
       +(o.go?'<button type="button" class="btn primary block" data-go>'+esc(o.go)+'</button>':'')
       +'<button type="button" class="btn block" data-back>'+esc(o.back||'Back')+'</button>'
-    +'</div>';
+    +'</div>'
+    +versionStamp();
   $lock.querySelector('[data-back]').onclick=o.onBack;
   return { err:$lock.querySelector('.err'), go:$lock.querySelector('[data-go]') };
 }
@@ -4757,7 +4803,8 @@ function lockGate(){
       <div class="dots">${[0,1,2,3].map(()=>'<div class="d"></div>').join('')}</div>
       <div class="err"></div>
       <div class="keypad">${PIN_KEYPAD_HTML}</div>
-      <button type="button" class="lock-link" data-forgot>Forgot PIN?</button>`;
+      <button type="button" class="lock-link" data-forgot>Forgot PIN?</button>
+      ${versionStamp()}`;
   $lock.querySelector('[data-forgot]').onclick=forgotPinFlow;   /* PIN_RECOVERY */
   const $dots=[...$lock.querySelectorAll('.dots .d')];
   const $err=$lock.querySelector('.err');
