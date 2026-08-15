@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.15-0934';</script>
+<script>window.EGS_VERSION = '2026.08.15-1324';</script>
 <title>Notebuilt</title>
 <style>
   /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
@@ -781,6 +781,84 @@ function loadSettings(){
 let settings = loadSettings();
 if(!settings.sortHouses) settings.sortHouses='updated';
 if(!settings.units) settings.units='imperial';
+
+/* ---------- storage schema: a number written, and actually read ----------
+   EGS-STD:schema — the §2 row lives here, on the block it describes.
+
+   Two version systems live in this file, and confusing them is the whole
+   risk, so they are named apart at every site they appear:
+
+     * NB_SCHEMA_VERSION — the shape of what is IN localStorage on THIS
+       device. Written into settings by an ordinary save, read here at
+       load, climbed by the ladder below.
+     * a backup file's `version` (2 or 3) — the shape of an EXPORTED .json.
+       Read by backupManifest(). It describes the FILE, never the device.
+
+   They are never compared and never assigned across. A number written but
+   never read is not versioning, it is decoration; this one is read on the
+   last line of this block and branched on. */
+const NB_SCHEMA_VERSION = 2;
+
+/* The ladder. The key is the version being migrated TO, and the function
+   takes the stored shape from key-1 up to key, in place. A rung must be
+   safe to run twice. Every future change to what this app writes into
+   localStorage MUST add a rung here — that registration is the point of
+   the object, not the machinery around it. */
+/* A rung runs in memory, because nothing about startup may write. So the
+   store it changed has to be written down by the same ordinary save that
+   stamps the number, or the number goes out describing a shape that is
+   not on disk yet — and the rung, now skipped, never gets another chance.
+   A rung that changed something names its store here. `settings` must
+   never be named: persist.settings IS the save doing the flushing. */
+const nbSchemaDirty=new Set();
+
+const NB_MIGRATIONS = {
+  /* 1 -> 2: every project carries a category. Projects made before
+     categories existed have none and answer "Uncategorized". The
+     unconditional backfill up at `let houses` still stands and is not
+     replaced by this: a restore assigns houses directly and never passes
+     a load, so removing it would strip the only pass those projects get.
+     Which means on today's data this rung finds the work already done —
+     it is here as the first real rung, and as the shape the next one
+     copies, not as a placeholder. */
+  2: function(){
+    let changed=0;
+    houses.forEach(h=>{ if(!h.category){ h.category='construction'; changed++; } });
+    if(changed) nbSchemaDirty.add('houses');
+  }
+};
+
+/* Absent means the pre-schema shape, v1 — what every device was carrying
+   before this build. Anything that is not a sane number reads the same
+   way: the conservative answer, never a guess upward. */
+function nbSchemaOf(o){
+  const v=o&&o.schemaVersion;
+  return (typeof v==='number' && isFinite(v) && v>=1) ? Math.floor(v) : 1;
+}
+
+/* nbSchemaReached is what the stamp will write: the version the data is
+   actually IN, not the one this build aspires to. A rung that throws
+   leaves the shape half-done, and stamping that "current" would hide the
+   damage from every load afterwards. */
+let nbSchemaReached=1;
+let schemaFromFuture=false;
+function nbApplySchema(from){
+  schemaFromFuture = from>NB_SCHEMA_VERSION;
+  nbSchemaReached = from;
+  /* Newer than this build understands. The rungs that would bring it
+     forward do not exist here, so nothing is migrated and nothing is
+     converted — the data is left exactly as the newer version left it,
+     and its number is carried through untouched so that version still
+     recognises its own shape when it comes back. */
+  if(schemaFromFuture) return;
+  for(let v=from+1; v<=NB_SCHEMA_VERSION; v++){
+    try{ const rung=NB_MIGRATIONS[v]; if(rung) rung(); nbSchemaReached=v; }
+    catch(e){ console.warn('Notebuilt: migration to schema v'+v+' did not complete',e); break; }
+  }
+}
+/* Read at load. It migrates in memory only — nothing about startup may
+   write, so the number waits for the next ordinary save to be stamped. */
+nbApplySchema(nbSchemaOf(settings));
 /* Omission is not deletion. `unlock` is a purchase and `vault` is the only
    way back into protected projects; neither may be dropped by a write that
    simply did not know about it. An explicit null still switches either off,
@@ -794,6 +872,31 @@ function saveSettings(){
     if(settings.unlock===undefined && prev.unlock && prev.unlock.activationId) settings.unlock=prev.unlock;
     if(settings.vault===undefined  && prev.vault)  settings.vault =prev.vault;
   }
+  /* Whatever a rung changed in memory gets written down BEFORE the number
+     that describes it — the stamp follows the data, it never leads it. If
+     one of these writes fails, the stamp is held back and this save does
+     nothing at all: a number claiming v2 over data still shaped v1 turns a
+     retryable failure into a rung skipped forever, which is the one
+     outcome worth losing a save to avoid. */
+  if(nbSchemaDirty.size){
+    try{ for(const name of nbSchemaDirty){ if(name!=='settings' && persist[name]) persist[name](); } }
+    catch(e){ console.warn('Notebuilt: migrated data would not persist — the schema number is held back',e); return; }
+    nbSchemaDirty.clear();
+  }
+  /* THE STAMP — here and nowhere else. This function is only ever reached
+     from something a person did, which is what keeps the number out of
+     startup without needing a guard of its own.
+
+     It writes `nbSchemaReached` and nothing else. That value is derived
+     from the data actually in hand — at load, and again at every restore —
+     so it is already the truth about the shape being saved. Deferring
+     instead to whatever number storage happened to hold a moment ago is
+     what left a restored device stuck at a version its data was never in:
+     a restore replaces the shape outright, and the old number describes
+     data that no longer exists. Downgrade protection does not depend on
+     that deferral — when the data really did come from a newer build,
+     nbApplySchema read the higher number off the data itself. */
+  settings.schemaVersion=nbSchemaReached;
   save(K.settings,settings);
 }
 const persist = { houses:()=>save(K.houses,houses), tasks:()=>save(K.tasks,tasks),
@@ -907,6 +1010,16 @@ if(settingsUnreadable){
      does not go away until a backup is restored, so the notice should not
      either. */
   setTimeout(()=>{ try{ toast('Saved settings could not be read \u2014 see Settings'); }catch(e){} }, 1800);
+}
+
+/* The data was written by a newer Notebuilt than this one. Nothing was
+   migrated and nothing was stamped down — but this build may not show
+   everything the newer one stored, and that is not a thing to stay quiet
+   about. Same shape of notice as above: a toast now, and a card in
+   Settings that lasts as long as the state does. The two cannot both be
+   true — unreadable settings carry no version to be from the future. */
+if(schemaFromFuture){
+  setTimeout(()=>{ try{ toast('This data is from a newer Notebuilt \u2014 see Settings'); }catch(e){} }, 1800);
 }
 
 /* Write it, then read it straight back. A settings write that throws, or
@@ -2270,6 +2383,12 @@ function renderSettings(){
       <div class="muted" style="font-size:13px;line-height:1.6">Your projects, notes, to-dos and photos are safe and untouched. What is in that file is your app lock, your vault passphrase record, your recovery code and your unlock.<br><br>
       Nothing has been overwritten — the damaged file is being left exactly as it is, and Notebuilt has stopped saving settings so it stays that way. Restore your most recent backup to put it right.<br><br>
       Until then, changes on this screen will not be remembered.</div>
+    </div>`:''}
+    ${schemaFromFuture?`<div class="card" style="border:1px solid var(--gold,#C89F47);margin-bottom:14px">
+      <div style="font-weight:600;margin-bottom:6px">This data was saved by a newer Notebuilt</div>
+      <div class="muted" style="font-size:13px;line-height:1.6">Your projects, notes, to-dos and photos are exactly as that version left them. Nothing has been converted and nothing has been dropped.<br><br>
+      This copy of the app is older than the data it found, so it may not show everything the newer one stored, and edits made here may not carry back to it.<br><br>
+      Close Notebuilt fully and open it twice to pick up the current version. If this message is still here after that, restore the most recent backup made by the version you were using.</div>
     </div>`:''}
     <div class="sec-head"><span class="label">Security</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>App lock</div><div class="muted" style="font-size:13px">${locked?'A PIN is required to open the app.':'Off — anyone with the phone can open it.'}</div></div>
@@ -4280,6 +4399,11 @@ async function exportData(){
      none of your custom categories, and the file said nothing about it. The
      contents block is that missing sentence: what this file holds, in its own
      words, readable without running anything. */
+  /* SCHEMA — `version:3` here is the EXPORT FORMAT of this file and nothing
+     else. The device's stored-shape number rides inside `settings` below,
+     as `schemaVersion`. Two systems, two jobs: this one tells a reader
+     what the FILE holds, that one tells a load what shape the DEVICE is
+     in. They are never compared. */
   const dump={ app:'notebuilt', version:3, exportedAt:now(), houses, tasks, notes, photos:photoData,
                vault: settings.vault || null,
                categories: categories,
@@ -4301,6 +4425,8 @@ function backupManifest(d){
   const c = d.contents || {};
   const num = (v, fallback)=> (typeof v==='number' ? v : fallback);
   return {
+    /* the FILE's export format (2 or 3), never the device's storage
+       schemaVersion — that one travels inside d.settings. */
     version:    d.version || 1,
     projects:   num(c.projects, (d.houses||[]).length),
     tasks:      num(c.tasks,    (d.tasks||[]).length),
@@ -4509,6 +4635,14 @@ async function importData(e){
        in memory goes: whatever is on screen belongs to the old data set. */
     vaultRelock(true);
     houses=d.houses||[]; tasks=d.tasks||[]; notes=d.notes||[];
+    /* SCHEMA — restored data climbs the same ladder a load would put it
+       on, before any of it is written down. The number read is the FILE's
+       STORED-SHAPE number, which travels inside its settings block; a file
+       with no settings block predates the schema entirely and reads as v1.
+       Do NOT read `d.version` here — that is the file's EXPORT FORMAT, a
+       different system with its own numbering, and conflating the two is
+       exactly the bug this comment exists to prevent. */
+    nbApplySchema((d.settings && typeof d.settings==='object') ? nbSchemaOf(d.settings) : 1);
     persist.houses(); persist.tasks(); persist.notes();
 
     /* BACKUP_V3 — a version 3 file carries these; a version 2 file does not,
