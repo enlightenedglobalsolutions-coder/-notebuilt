@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.16-0812';</script>
+<script>window.EGS_VERSION = '2026.08.16-0919';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -214,6 +214,72 @@
   }
   .sec-head .rule{flex:1;height:1px;background:var(--line)}
   .sec-head .count{font-family:var(--mono);font-size:11px;color:var(--paper-faint)}
+
+  /* ---- Info markers ----
+     EGS-STD:infomode — §2 row 14 lives here, on the block it describes.
+
+     ONE RULE switches every marker off: the [data-guide="off"] line at the
+     bottom of this block. No screen, no render function and no handler ever
+     asks which mode the app is in — they all draw the marker and the
+     stylesheet decides whether it is seen. That is deliberate. The moment a
+     render function starts branching on the mode, expert becomes a second
+     layout to test rather than the same layout with something hidden, and
+     the two drift the first time one of them is edited alone.
+
+     ZERO REFLOW BETWEEN MODES is the other half, and it is why there are
+     exactly three hosts and no others:
+
+       * inside a .sec-head, straight after .label — .rule is flex:1 and
+         swallows the marker's width, so the label does not move and neither
+         does the count or button on the right. 15px is under the 11px
+         label's own 15.95px line box, so the row does not grow either.
+       * inline at the end of a SHORT, FIXED topbar <h1> — "To Do",
+         "Projects", "Notes", "Calculator". 15px sits inside a 25px serif
+         line box without raising it, and none of those four can wrap.
+       * .help-corner, absolute in a sheet's top-right — out of flow
+         entirely, so a sheet title of any length is untouched by it.
+
+     A variable-length title never gets an inline marker. It could wrap in
+     beginner and not in expert, and a line that appears and disappears is
+     precisely the reflow this rule exists to forbid.
+
+     Colours are roles, not picks. The border is --line-strong because here
+     the outline IS the control — the same reason the empty to-do punch and
+     the unfilled PIN dot use it, and it is the token measured to clear 3:1
+     on every ground. The glyph is --paper-dim, the secondary text role,
+     measured past 4.5:1 in both themes. audit_contrast.py reads both out of
+     this file, so neither can drift quietly. */
+  .help-i{
+    flex:none;align-self:center;position:relative;
+    width:15px;height:15px;padding:0;border-radius:50%;
+    border:1px solid var(--line-strong);background:none;
+    color:var(--paper-dim);font-family:var(--serif);
+    font-size:10px;font-style:italic;line-height:1;
+    display:inline-flex;align-items:center;justify-content:center;
+    vertical-align:-2px;
+  }
+  .help-i:active{border-color:var(--brass);color:var(--brass)}
+  /* A 46px-ish tap target bought without one pixel of layout: an invisible
+     pad overflowing the 15px dot. Biased right, into the .sec-head rule,
+     which is inert — reaching further left would start stealing taps from
+     labels that are themselves buttons (Site Notes is one). */
+  .help-i::after{content:'';position:absolute;top:-11px;bottom:-11px;left:-6px;right:-14px}
+  .sec-head .help-i{margin-left:-2px}
+  /* The Calculator's host. .cclear is one button packed right, so an auto
+     margin parks the marker at the far left and the gap between them does the
+     absorbing — Clear does not move when the marker goes, and the row's
+     height is the button's 46px either way. This exists because the title
+     could not take the marker: at 320px the ft/in toggle leaves .grow 133.5px
+     and "Calculator" is already 133.5px of it, so the h1 wrapped in beginner
+     and not in expert. Measured, at width, not eyeballed at desktop. */
+  .cclear .help-i{margin-right:auto}
+  .sheet{position:relative}
+  .help-corner{position:absolute;top:9px;right:12px;z-index:1}
+  /* Symmetric and short, because .sheet is overflow:auto — a pad reaching
+     past the padding box on the right would invent a horizontal scrollbar. */
+  .help-corner::after{left:-11px;right:-11px}
+  /* THE ONE RULE. Expert mode is this line and nothing else. */
+  :root[data-guide="off"] .help-i{display:none}
 
   /* ---- Status chip (the punch) ---- */
   .chip{
@@ -1436,6 +1502,170 @@ if(window.matchMedia){
   else if(nbMQ.addListener) nbMQ.addListener(nbOnSystemChange);
 }
 
+/* ============================================================
+   EGS-STD:infomode — beginner ⇄ expert, and the (i) markers
+   ============================================================
+   The stylesheet does the hiding (search .help-i for why). This half is the
+   preference, the markers, the sheet they open, and the copy itself.
+
+   Its own key, not settings, for the same reason the theme has one: this
+   describes the PHONE, not the data. A backup restored onto a mate's tablet
+   should not decide whether he gets the explanations. Absent means ON, which
+   is what makes "existing installs default to beginner too" free — there is
+   nothing to migrate, because there was never anything written.
+
+   Startup reads and never writes. nbGuideApply() sets a DOM attribute, which
+   is not storage; the only writers are nbGuideSet and the notice's dismiss,
+   and a tap is the only way to either. */
+const NB_GUIDE_KEY='notebuilt.beginner';
+const NB_GUIDE_NOTICE_KEY='notebuilt.guideNoticeSeen';
+function nbGuideOn(){
+  try{ return localStorage.getItem(NB_GUIDE_KEY)!=='off'; }catch(e){ return true; }
+}
+function nbGuideApply(){
+  document.documentElement.setAttribute('data-guide', nbGuideOn()?'on':'off');
+}
+function nbGuideSet(on){
+  try{ localStorage.setItem(NB_GUIDE_KEY, on?'on':'off'); }catch(e){}
+  nbGuideNoticeDismiss(true);      /* they found the switch; stop pointing at it */
+  nbGuideApply();
+}
+nbGuideApply();
+
+/* One line, once, for the phones that already had Notebuilt before markers
+   existed. A fresh install never sees it — beginner mode IS the fresh
+   install, and being told about a change you did not experience is noise.
+   In flow, inside the page, so it can never stack with the install banner or
+   the backup nudge, which are both fixed to the bottom of the screen. */
+function nbGuideNoticeDue(){
+  if(!nbGuideOn()) return false;
+  try{
+    if(localStorage.getItem(NB_GUIDE_NOTICE_KEY)) return false;
+    if(localStorage.getItem(NB_GUIDE_KEY)) return false;   /* already chose, once */
+  }catch(e){ return false; }
+  return !!(houses.length||notes.length||tasks.length);     /* an existing install */
+}
+function nbGuideNoticeHtml(){
+  if(!nbGuideNoticeDue()) return '';
+  return '<div class="wrap"><div class="card row" style="margin:12px 0 0;align-items:flex-start">'
+    +'<div class="grow muted" style="font-size:13px;line-height:1.55">New here: the small '
+    +'<b style="color:var(--paper)">i</b> marks explain what each part of the app does. '
+    +'Turn them off any time — Settings, under Guide.</div>'
+    +'<button class="icon-btn" data-guide-notice-x aria-label="Got it" style="width:36px;height:36px;flex:none">'+I.x+'</button>'
+    +'</div></div>';
+}
+function nbGuideNoticeDismiss(silent){
+  try{ localStorage.setItem(NB_GUIDE_NOTICE_KEY,'1'); }catch(e){}
+  if(!silent) render();
+}
+
+/* The marker. Two shapes, one behaviour — nbHelpMark goes in flow where the
+   host has slack, nbHelpCorner is pinned in a sheet's corner where it does
+   not. Both carry the key and nothing else; the copy is looked up at tap. */
+function nbHelpMark(key){
+  return '<button type="button" class="help-i" data-help="'+esc(key)+'" aria-label="What is this?">i</button>';
+}
+function nbHelpCorner(key){
+  return '<button type="button" class="help-i help-corner" data-help="'+esc(key)+'" aria-label="What is this?">i</button>';
+}
+/* Called with $app from bind(), and with $mr from sheet(). Nowhere else has
+   markers, and nothing else needs to know they exist. */
+function nbHelpBind(root){
+  if(!root) return;
+  root.querySelectorAll('.help-i[data-help]').forEach(b=>b.onclick=ev=>{
+    /* Half these markers sit on hosts that are themselves buttons — the Site
+       Notes heading, a settings row that navigates. The marker wins its own
+       tap and the host never sees it. */
+    ev.preventDefault(); ev.stopPropagation();
+    nbHelpSheet(b.dataset.help);
+  });
+}
+/* Layered, not swapped. $mr holds exactly one sheet, so drawing help through
+   sheet() would destroy the sheet the marker was tapped in — you would ask
+   what Share does and lose the share screen answering it. This appends its
+   own scrim above whatever is there and removes only its own node. */
+function nbHelpSheet(key){
+  const copy=HELP_COPY[key]; if(!copy) return;
+  const el=document.createElement('div');
+  el.className='scrim help-scrim';
+  el.style.zIndex='81';                    /* one above .scrim, under the lock */
+  el.innerHTML='<div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>'
+    +'<h2>'+esc(HELP_TITLE[key]||'About this')+'</h2>'
+    +'<div class="muted" style="font-size:13.5px;line-height:1.62">'
+    +esc(copy).replace(/\n\n/g,'<br><br>')+'</div>'
+    +'<button class="btn block" data-help-close style="margin-top:16px">Got it</button></div>';
+  document.body.appendChild(el);
+  const close=()=>{ if(el.parentNode) el.parentNode.removeChild(el); };
+  el.addEventListener('click',ev=>{ if(ev.target===el) close(); });
+  el.querySelector('[data-help-close]').onclick=close;
+}
+
+/* ---------- the copy ----------
+   Moved here from the recovery-code section, where the first four entries
+   were parked with a note saying they were "planted now so info mode
+   inherits it". This is the inheritance.
+
+   Two of them are read by things that are not markers and must keep their
+   shape: 'pin-recovery' is quoted inside maybeOfferRecoveryCode(), where a
+   longer entry would run into the sentence that follows it, and
+   'photo-send' is the long version of the two lines the send sheet already
+   shows. Both are reached by a marker as well.
+
+   Plain paragraphs, split on a blank line. No markup: nbHelpSheet escapes
+   every entry before it draws it, so a stray < in a future edit cannot turn
+   into a tag. */
+const HELP_TITLE={
+  'guide':'Beginner mode',
+  'todos':'To Do',
+  'projects':'Projects',
+  'categories':'Categories',
+  'photos':'Photos',
+  'photo-send':'Sending a photo out',
+  'notes':'Notes',
+  'calc':'Calculator',
+  'applock':'App lock',
+  'pin-recovery':'If you forget your PIN',
+  'vault':'Protected projects',
+  'backup':'Backup, export and restore',
+  'import-project':'Import a shared project',
+  'share':'Share a project',
+  'theme':'Theme',
+  'unlock':'Free, and unlocking'
+};
+const HELP_COPY={
+  'guide':'Beginner mode puts a small circled i beside the parts of the app worth a sentence of explanation. Tap one and it tells you what that thing does, in plain words, including what it will not do.\n\nExpert hides every one of them. Nothing else changes, no feature goes away, and you can switch back in here whenever you like.\n\nThis setting stays on this phone. It is not in your backup, so the tablet on the bench and the phone in the truck can each be set to suit whoever picks it up.',
+
+  'todos':'Everything you need to get done, in one list, whether it belongs to a project or not. Tap the punch on the left to move an item along: To do, then Doing, then Done. Tap the words to edit it, change its status, or move it to a project.\n\nDone items stay on the list until you tap Clear done, so at the end of the day you can see what you got through.\n\nTo-dos inside a protected project do not show up here. They stay inside that project, behind its passphrase.',
+
+  'projects':'A project is a job — a house, a shop, a unit, or anything else you want photos, notes, specs and to-dos kept together for. Tap + to start one. Everything you put in it lives on this phone.\n\nThe chips along the top filter by category. The button in the corner changes the order they are listed in.\n\nNotebuilt is free for '+UNLOCK.FREE_PROJECTS+' projects with every feature switched on. Unlocking takes the limit off. Projects you have already made are yours to keep either way — nothing here ever locks or hides work you have already done.',
+
+  'categories':'Categories are labels for sorting your projects — Construction, Personal, or anything you make up. Tap a chip along the top of Projects to show only that kind.\n\nIn here you can rename one, change its emoji, move it up or down the list, or remove it.\n\nDeleting a category never deletes a project. Projects that were in it simply show as Uncategorized until you give them a new one.',
+
+  'photos':'Camera takes the picture inside Notebuilt. Library brings in one already on the phone. Tap a photo to open it, where you can rotate it, draw on it, make it the project’s cover, send it out, or delete it.\n\nPhotos taken here do not appear in your camera roll or your phone’s gallery, and that is on purpose. Job photos stay out of the family pictures, and out of whatever cloud backup the gallery is signed in to. They live in Notebuilt’s own storage on this device, and they come back with your backup file.\n\nIf you want one out of the app, open it and use Share or Save to device.\n\nCapture size, under Photos in Settings, trades picture quality against how much room the photos take up. You can push a single shot to Max from the viewfinder without changing the setting.',
+
+  'photo-send':'Share hands the image straight to another app on this phone — your workforce app, a message, email. Save to device puts a copy in your Downloads folder, which is not the same place as your camera roll; your gallery may not show it. Only the picture is sent: no project name, no address, nothing about where it was taken. From a protected project, both of these take the photo out of the vault as an ordinary unprotected image, and whatever receives it keeps it — which is why it asks first, and why it needs the vault open to do it at all.',
+
+  'notes':'Notes are for anything that is not a to-do — measurements, a supplier’s number, what the customer said on Tuesday. A note can belong to a project or stand on its own.\n\nMark one Important and it stays pinned to the top of the list.\n\nNotes save themselves as you type, and again when you back out of one, so there is no Save button to forget.\n\nNotes inside a protected project only appear inside that project.',
+
+  'calc':'Five calculators sharing one set of measurement boxes.\n\nAdd / Subtract works a tape measure — two measurements, plus or minus. Multiply / Divide takes one measurement and a plain number. Board Feet is thickness × width × length ÷ 144. Area is width × length. Square-up gives the diagonal a square layout should measure corner to corner — the 3-4-5 check.\n\nEach mode keeps its own operator and its own numbers, and Clear empties only the mode you are looking at.\n\nSwitch ft/in and metric whenever you like. What you typed converts; it does not get thrown away. Nothing here is saved into a project — it is a scratch pad.',
+
+  'applock':'A PIN on the front door. Turn it on and Notebuilt asks for four digits before it opens, which keeps a workmate, a kid, or whoever picks the phone up out of your projects.\n\nBe clear about what it is not. The PIN does not encrypt anything. Someone who knows their way around a phone could still reach the files underneath it. If you need the contents themselves unreadable, that is what a protected project and its vault passphrase are for.\n\nIf you forget the PIN there are two ways back in: your vault passphrase, if you set one up, or a one-time recovery code you wrote down beforehand. Only a scrambled version of that code is kept on the phone, so nobody can read it back off the device — us included.\n\nWith neither of those, there is no way in. That is the honest answer, not a policy.',
+
+  'pin-recovery':'Your PIN keeps casual hands out of the app. It does not encrypt anything — the vault passphrase does.',
+
+  'vault':'A protected project is encrypted on this phone with a passphrase only you know. Its notes, to-dos, specs and photos are unreadable until you unlock it — not by someone holding your phone, not by Notebuilt, not by us. Turn it on from a project’s Edit screen.\n\nThe passphrase is not your PIN, and it is not stored anywhere. There is no reset, no email link, no back door. Lose it and that project is gone for good. That is what real encryption costs, and we would rather say it plainly than sell you something softer.\n\nWhile it is unlocked the project behaves like any other. It locks itself again after fifteen minutes of nothing happening, when you tap Lock now, or when you close the app.\n\nA protected project never shows its contents in the cross-project lists, and it cannot be shared.',
+
+  'backup':'Export writes everything — projects, photos, notes, to-dos — into one file and hands it to your phone. It lands in Downloads with today’s date in the name. That file is yours. There is no copy on our side, because there is no our side.\n\nPut it somewhere that will survive the phone: another device, a cloud drive, a memory stick. A backup that only exists on the phone you are protecting is not a backup.\n\nRestore reads a file back and replaces everything currently in the app. Use it on a new phone or after a reinstall, not on top of work you still want.\n\nAnything from a protected project stays encrypted inside the file. That is what makes the file safe to store anywhere, and it is why those projects come back locked, needing the same passphrase they were made with. Nothing in the file can stand in for it.\n\nNotebuilt reminds you when it has been three weeks since your last backup, and at most once a week after that. Dismiss it and it goes quiet.',
+
+  'import-project':'If another Notebuilt user sends you a project file, this brings it in as a brand-new project of your own. It never overwrites or touches anything already in the app.\n\nWhatever they chose to leave out — the address, the photos — is simply not in the file, so it will not appear.\n\nFor your own backup use Restore instead. Restore replaces everything; this only adds.',
+
+  'share':'This builds a file another Notebuilt user can import. You choose what travels: the project name and its specs always go, and the address, site notes, photos and to-dos only if you tick them. Photos make the file large, so leave them off unless they are the point of sending it.\n\nOnce you hand it to your phone’s share sheet it is out of Notebuilt’s hands. We are not in the middle of that transfer, and it cannot be taken back.\n\nProtected projects cannot be shared at all. There is no version of that which is safe.\n\nSharing the app itself is a different thing, from the icon on the To Do screen — that sends a link and nothing else.',
+
+  'theme':'Day is for bright cabs and outdoors, where a dark screen turns into a mirror. Night is the notebook you know. Auto follows whatever your phone is set to, and changes with it. This one is kept per device, not in your backup — the phone in the truck and the tablet on the bench can each be set to suit where they are used.',
+
+  'unlock':'Notebuilt is free for '+UNLOCK.FREE_PROJECTS+' projects with every single feature switched on — photos, the vault, backups, the calculator, all of it. Unlocking takes the limit off how many projects you keep. It is '+UNLOCK.PRICE+', once. No subscription, no account, no trial that runs out.\n\nProjects you already made never lock. Reaching the limit stops you starting another one; it never touches the ones you have.\n\nEntering your key sends it to Polar, who handle the payment, a single time, to register it. After that Notebuilt never contacts anything again — the unlock is not re-checked at launch, or ever. The key is stored in your settings, so your backup carries it to your next phone.\n\nIt is a real app that installs straight from the website — no app store in the middle. You go to notebuilt.ca, tap Install, and it is on your home screen like any other app: its own icon, opens full screen, works with no signal. The only difference is where it came from.\n\nIt is not in an app store today, and a store version is in the works. But here is the honest reason it started this way: direct means no middleman. No store taking a 15-30% cut that I’d have to pass on to you, no account required, no store tracking what you installed. You get it direct from the guy who built it, and updates land the moment I ship them instead of waiting on store review.\n\nSame app either way once it is installed. Your data is identical — everything stays on your phone regardless.\n\nAnd because the check runs on your own phone, in code you can read, it is honesty-based. I know that. Paying is a choice to keep this being built, not a lock I have you behind.'
+};
+
 /* ---------- IndexedDB for photos (blobs, never uploaded) ---------- */
 let _db=null;
 function db(){
@@ -2035,13 +2265,13 @@ function renderToday(){
   const d=new Date();
   /* Landing header: share, then search. Two icon buttons is the ceiling here —
      the eyebrow date is the widest thing in this bar at phone width. */
-  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(d.toLocaleDateString(undefined,{weekday:'long'}))} · ${esc(d.toLocaleDateString(undefined,{month:'long',day:'numeric'}))}</span><h1>To Do</h1></div>
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(d.toLocaleDateString(undefined,{weekday:'long'}))} · ${esc(d.toLocaleDateString(undefined,{month:'long',day:'numeric'}))}</span><h1>To Do ${nbHelpMark('todos')}</h1></div>
     <button class="icon-btn" data-share-app aria-label="Share ${esc(APP_NAME)}" title="Share ${esc(APP_NAME)}">${EGS_SHARE_GLYPH}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
-  if(!list.length) return head+`<div class="empty">${I.today}<div class="t">Nothing on the list yet</div><div>Tap + to add what you're working on. Mark it Doing when you start, Done when it's finished.</div></div>`;
+  if(!list.length) return head+nbGuideNoticeHtml()+`<div class="empty">${I.today}<div class="t">Nothing on the list yet</div><div>Tap + to add what you're working on. Mark it Doing when you start, Done when it's finished.</div></div>`;
   const sec=(label,arr)=> arr.length?`<div class="sec-head"><span class="label">${label}</span><span class="rule"></span><span class="count">${arr.length}</span></div>${arr.map(taskRow).join('')}`:'';
   const doneSec = done.length ? `<div class="sec-head"><span class="label">Done</span><span class="rule"></span><button class="btn sm" data-clear-done style="padding:2px 10px">Clear done</button></div>${done.map(taskRow).join('')}` : '';
-  return head+`<div class="wrap">${sec('In progress',doing)}${sec('To do',todo)}${doneSec}</div>`;
+  return head+nbGuideNoticeHtml()+`<div class="wrap">${sec('In progress',doing)}${sec('To do',todo)}${doneSec}</div>`;
 }
 function taskRow(t){
   const h=t.houseId?houseById(t.houseId):null;
@@ -2060,7 +2290,7 @@ function taskRow(t){
    ============================================================ */
 function renderHouses(){
   const sortLabel=(SORT_OPTIONS.find(o=>o.id===(settings.sortHouses||'updated'))||SORT_OPTIONS[0]).label;
-  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Projects</h1></div>
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Projects ${nbHelpMark('projects')}</h1></div>
     <button class="icon-btn" data-sort-houses aria-label="Sort projects: ${esc(sortLabel)}">${I.sort}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No projects yet</div><div>Add a project to keep its photos, notes and to-dos in one place — a job site, an app you're building, or anything else.</div></div>`;
@@ -2136,7 +2366,7 @@ function renderHouse(id){
       </div>`;}).join('')}</div>`).join('');
 
   const photos=photosFor(id,id);
-  const photoGrid=`<div class="sec-head"><span class="label">Photos</span><span class="rule"></span><span class="count">${photos.length}</span></div>
+  const photoGrid=`<div class="sec-head"><span class="label">Photos</span>${nbHelpMark('photos')}<span class="rule"></span><span class="count">${photos.length}</span></div>
     <div class="photo-grid">
       <!-- CAM_MULTISHOT — the in-app viewfinder for every project, not just
            protected ones. Handing an unprotected project to the phone's
@@ -2156,7 +2386,7 @@ function renderHouse(id){
     <button class="btn block sm" data-add-house-task style="margin-top:4px">${I.plus} Add to-do</button>`;
 
   const houseNotes=notes.filter(n=>n.houseId===id).sort((a,b)=>(b.important-a.important)||(b.updatedAt-a.updatedAt));
-  const notebookBlock=`<div class="sec-head"><span class="label">Notebook</span><span class="rule"></span><span class="count">${houseNotes.length}</span></div>
+  const notebookBlock=`<div class="sec-head"><span class="label">Notebook</span>${nbHelpMark('notes')}<span class="rule"></span><span class="count">${houseNotes.length}</span></div>
     ${houseNotes.length?houseNotes.map(noteCardHtml).join(''):'<div class="card muted" style="text-align:center;padding:18px">No notes for this project yet.</div>'}
     <button class="btn block sm" data-add-note-house="${h.id}" style="margin-top:4px">${I.plus} Add note</button>`;
 
@@ -2217,7 +2447,7 @@ function noteCardHtml(n){
 }
 
 function renderNotes(){
-  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Notebook</span><h1>Notes</h1></div>
+  const head=`<div class="topbar"><div class="grow"><span class="eyebrow">Notebook</span><h1>Notes ${nbHelpMark('notes')}</h1></div>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   /* VAULT_RENDER — a protected project's notes live only inside that project. */
   const visible=notes.filter(n=>!isProtected(n.houseId));
@@ -2579,7 +2809,7 @@ function renderCalc(){
      fields where the others have two, and bf/area/sq draw no result block
      until every field is in. Plain .btn, the same class as the operator keys,
      so the target is the 46px --tap one and gloves find it by feel. */
-  var clearRow='<div class="cclear"><button class="btn" data-calc-clear>Clear</button></div>';
+  var clearRow='<div class="cclear">'+nbHelpMark('calc')+'<button class="btn" data-calc-clear>Clear</button></div>';
   return '<div class="topbar"><div class="grow"><span class="eyebrow">'+esc(APP_NAME)+'</span><h1>Calculator</h1></div>'+unitTog+'</div>'
     +'<div class="wrap"><div style="display:flex;flex-wrap:wrap;margin-bottom:10px">'+tabhtml+'</div>'+clearRow+body
     +'<p class="muted" style="font-size:12px;margin-top:16px;line-height:1.5">Enter measurements in the boxes. Switch ft/in \u2194 metric anytime \u2014 values convert automatically.</p></div>';
@@ -2608,7 +2838,7 @@ function renderSettings(){
       This copy of the app is older than the data it found, so it may not show everything the newer one stored, and edits made here may not carry back to it.<br><br>
       Close Notebuilt fully and open it twice to pick up the current version. If this message is still here after that, restore the most recent backup made by the version you were using.</div>
     </div>`:''}
-    <div class="sec-head"><span class="label">Security</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Security</span>${nbHelpMark('applock')}<span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>App lock</div><div class="muted" style="font-size:13px">${locked?'A PIN is required to open the app.':'Off — anyone with the phone can open it.'}</div></div>
       <button class="btn sm" data-pin>${locked?'Change':'Set PIN'}</button></div>
     ${locked?`<button class="btn danger block sm" data-pin-off style="margin-top:-4px">Turn off app lock</button>`:''}
@@ -2618,7 +2848,7 @@ function renderSettings(){
       : 'Nothing is set up \u2014 you would be locked out.'}</div></div>${
         vaultExists() ? '' : `<button class="btn sm" data-reco-new>${recoveryExists()?'New code':'Create'}</button>`}</div>`:''}
 
-    <div class="sec-head"><span class="label">Protected projects</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Protected projects</span>${nbHelpMark('vault')}<span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Vault</div><div class="muted" style="font-size:13px">${esc(vaultStatusLine())}</div></div>
       ${vaultUnlocked()?`<button class="btn sm" data-vault-lock>Lock now</button>`:''}</div>
     <div class="card muted" style="font-size:12.5px;line-height:1.6;margin-top:-4px">${
@@ -2633,7 +2863,7 @@ function renderSettings(){
     <div class="sec-head"><span class="label">Privacy</span><span class="rule"></span></div>
     <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What we collect, where your data lives, how we make money.</div></div><span class="chev">${I.chevronR}</span></div>
 
-    <div class="sec-head"><span class="label">Appearance</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Appearance</span>${nbHelpMark('theme')}<span class="rule"></span></div>
     <div class="card row" data-help="theme"><div class="grow"><div>Theme</div><div class="muted" style="font-size:13px">${
       nbThemeMode()==='system'
         ? 'Following your phone \u2014 '+(nbThemeIsDark()?'night':'day')+' right now.'
@@ -2642,15 +2872,21 @@ function renderSettings(){
       <div class="unit-toggle">${['light','dark','system'].map(m=>
         `<button class="${nbThemeMode()===m?'on':''}" data-theme-set="${m}">${NB_THEME_LABEL[m]}</button>`).join('')}</div></div>
 
+    <div class="sec-head"><span class="label">Guide</span>${nbHelpMark('guide')}<span class="rule"></span></div>
+    <div class="card row"><div class="grow"><div>Beginner mode</div><div class="muted" style="font-size:13px">${nbGuideOn()
+      ? 'Small i marks sit beside each part of the app. Tap one to read what it does.'
+      : 'Expert \u2014 the i marks are hidden. Nothing else changes.'}</div></div>
+      <div class="unit-toggle"><button class="${nbGuideOn()?'on':''}" data-guide-set="on">Beginner</button><button class="${nbGuideOn()?'':'on'}" data-guide-set="off">Expert</button></div></div>
+
     <div class="sec-head"><span class="label">Units</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Measurements</div><div class="muted" style="font-size:13px">Default for the calculator and measurement fields. You can switch per screen too.</div></div>
       <div class="unit-toggle"><button class="${(settings.units||'imperial')==='imperial'?'on':''}" data-units-set="imperial">ft/in</button><button class="${settings.units==='metric'?'on':''}" data-units-set="metric">metric</button></div></div>
 
-    <div class="sec-head"><span class="label">Photos</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Photos</span>${nbHelpMark('photos')}<span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Capture size</div><div class="muted" style="font-size:13px">${esc(PHOTO_PRESETS[photoPresetKey()].hint)} You can switch to Max for a single shot from the viewfinder.</div></div>
       <div class="unit-toggle">${Object.keys(PHOTO_PRESETS).map(k=>`<button class="${k===photoPresetKey()?'on':''}" data-photo-preset="${k}">${esc(PHOTO_PRESETS[k].label)}</button>`).join('')}</div></div>
 
-    <div class="sec-head"><span class="label">Unlock</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Unlock</span>${nbHelpMark('unlock')}<span class="rule"></span></div>
     <div class="card row" data-help="unlock"><div class="grow"><div>${unlockIsOn()?'Unlocked \u2713':(houses.length>UNLOCK.FREE_PROJECTS?'Free':'Free \u2014 '+UNLOCK.FREE_PROJECTS+' projects')}</div>
       <div class="muted" style="font-size:13px">${unlockIsOn()
         ? 'Unlimited projects. Activated '+esc(unlockActivatedOn())+', and never re-checked since.'
@@ -2676,9 +2912,14 @@ function renderSettings(){
    ============================================================ */
 const $mr=document.getElementById('modal-root');
 function closeSheet(){ $mr.innerHTML=''; }
-function sheet(html){
-  $mr.innerHTML=`<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
+/* EGS-STD:infomode — the optional second argument is a HELP_COPY key, and
+   the marker it draws is pinned to the sheet's corner rather than put in the
+   title. Sheet titles carry project names, and a name long enough to wrap
+   would wrap differently with a marker than without it. */
+function sheet(html,helpKey){
+  $mr.innerHTML=`<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${helpKey?nbHelpCorner(helpKey):''}${html}</div></div>`;
   $mr.querySelector('[data-scrim]').addEventListener('click',e=>{ if(e.target.hasAttribute('data-scrim')) closeSheet(); });
+  nbHelpBind($mr);
 }
 
 /* VAULT_RENDER — a cross-project picker never offers a protected project.
@@ -2723,7 +2964,7 @@ function openShareSheet(houseId){
     <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-notes" checked style="width:20px;height:20px;accent-color:var(--brass)"> Site notes</label></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-photos" style="width:20px;height:20px;accent-color:var(--brass)"> Photos (${(h.photos||[]).length})</label></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer"><input type="checkbox" id="sh-tasks" style="width:20px;height:20px;accent-color:var(--brass)"> To-dos</label></div>
-    <button class="btn primary block" id="sh-go">${I.share} Share project</button>`);
+    <button class="btn primary block" id="sh-go">${I.share} Share project</button>`,'share');
   $mr.querySelector('#sh-go').onclick=()=>doShareHouse(houseId,{
     address:$mr.querySelector('#sh-addr').checked,
     notes:$mr.querySelector('#sh-notes').checked,
@@ -2889,7 +3130,7 @@ function openManageCategories(){
         <input class="input grow" placeholder="New category name" id="cat-new-label">
       </div>
       <button class="btn primary block sm" id="cat-new-save" style="margin-top:8px">${I.plus} Add category</button>
-    </div>`);
+    </div>`,'categories');
   wireCategoryRows();
   $mr.querySelector('#cat-new-save').onclick=()=>{
     const label=$mr.querySelector('#cat-new-label').value.trim(); if(!label)return;
@@ -2999,6 +3240,12 @@ function bind(){
   /* Its own key, not settings — so this deliberately does NOT go through
      persist.settings(). See the EGS-STD:themes block for why. */
   $app.querySelectorAll('[data-theme-set]').forEach(b=>b.onclick=()=>{ nbSetTheme(b.dataset.themeSet); render(); toast('Theme: '+NB_THEME_LABEL[nbThemeMode()]); });
+  /* EGS-STD:infomode — its own key too, and for the same reason as the theme
+     above: it describes this phone, not the data, so persist.settings() is
+     deliberately not involved. */
+  $app.querySelectorAll('[data-guide-set]').forEach(b=>b.onclick=()=>{ nbGuideSet(b.dataset.guideSet==='on'); render(); toast(nbGuideOn()?'Beginner mode on':'Expert mode on'); });
+  const gnX=$app.querySelector('[data-guide-notice-x]'); if(gnX) gnX.onclick=()=>nbGuideNoticeDismiss(false);
+  nbHelpBind($app);
   $app.querySelectorAll('[data-units-set]').forEach(b=>b.onclick=()=>{ settings.units=b.dataset.unitsSet; persist.settings(); render(); });
   $app.querySelectorAll('[data-photo-preset]').forEach(b=>b.onclick=()=>{ settings.photoPreset=b.dataset.photoPreset; persist.settings(); render(); toast('Capture size: '+PHOTO_PRESETS[photoPresetKey()].label); });
   function calcBindWidget(id, slot){
@@ -3162,6 +3409,11 @@ const APP_MONETIZATION = {
    sends it lives in the EGS CORE block below. Easy to veto or rewrite. */
 const SHARE_APP_LINE = 'Notebuilt — the field notebook for construction crews. Private, offline, yours.';
 
+/* EGS-STD:support — §2 row 7 lives here, on the view it describes. The row
+   is conditional on an app charging or having a Support page; Notebuilt does
+   both, so its SKIP at the deploy gate was silence on a row this app really
+   implements, not a legitimate omission. §7 has recorded it as owed since
+   2026-08-16. This is the next touch. */
 function renderSupport(){
   const tabs=PAYMENT_TABS.map(t=>`<button class="btn sm ${t.id===supportTab?'primary':''}" data-pay-tab="${t.id}">${t.label}</button>`).join('');
   return `<div class="topbar">
@@ -3169,7 +3421,7 @@ function renderSupport(){
     <div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Support &amp; Backup</h1></div>
   </div>
   <div class="wrap">
-    <div class="sec-head"><span class="label">Back up your data</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Back up your data</span>${nbHelpMark('backup')}<span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">${APP_BACKUP_DESC}</div>
     <div class="row" style="gap:10px;margin:10px 0 10px">
       <button class="btn primary" style="flex:1" data-export>${I.download} Export</button>
@@ -3177,7 +3429,7 @@ function renderSupport(){
     </div>
     <div class="muted" style="font-size:12.5px;line-height:1.6;margin:0 0 22px">Restoring replaces everything currently in the app. Protected projects come back <b style="color:var(--paper)">locked</b> &mdash; you'll need the passphrase they were made with, and nothing in the file can stand in for it.</div>
 
-    <div class="sec-head"><span class="label">Import a shared project</span><span class="rule"></span></div>
+    <div class="sec-head"><span class="label">Import a shared project</span>${nbHelpMark('import-project')}<span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">Received a project file from another Notebuilt user? Bring it in as a brand-new project — it won't touch anything else already in your app.</div>
     <label class="btn block" style="margin:10px 0 22px;display:flex;align-items:center;justify-content:center;gap:8px">${I.upload} Import shared project<input type="file" accept="application/json,.json" hidden data-import-project></label>
 
@@ -4057,7 +4309,7 @@ function openPhotoSendSheet(){
     +'</div>'
     +'<button class="btn primary block" data-ph-share>'+I.share+' Share\u2026</button>'
     +'<button class="btn block" style="margin-top:10px" data-ph-save>'+I.download+' Save to device</button>'
-    +'<button class="btn block" style="margin-top:10px" data-ph-cancel>Cancel</button>');
+    +'<button class="btn block" style="margin-top:10px" data-ph-cancel>Cancel</button>','photo-send');
   $mr.querySelector('[data-ph-cancel]').onclick=closeSheet;
   $mr.querySelector('[data-ph-share]').onclick=()=>sendViewerPhoto(true);
   $mr.querySelector('[data-ph-save]').onclick=()=>sendViewerPhoto(false);
@@ -4955,13 +5207,10 @@ function randSalt(){ return [...crypto.getRandomValues(new Uint8Array(8))].map(b
 const RECOVERY_ALPHABET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECOVERY_LEN=16;   /* 16 chars from 32 symbols = 80 bits */
 
-/* PIN_RECOVERY — info-mode copy, planted now so info mode inherits it. */
-const HELP_COPY={
-  'theme':'Day is for bright cabs and outdoors, where a dark screen turns into a mirror. Night is the notebook you know. Auto follows whatever your phone is set to, and changes with it. This one is kept per device, not in your backup \u2014 the phone in the truck and the tablet on the bench can each be set to suit where they are used.',
-  'pin-recovery':'Your PIN keeps casual hands out of the app. It does not encrypt anything \u2014 the vault passphrase does.',
-  'photo-send':'Share hands the image straight to another app on this phone \u2014 your workforce app, a message, email. Save to device puts a copy in your Downloads folder, which is not the same place as your camera roll; your gallery may not show it. Only the picture is sent: no project name, no address, nothing about where it was taken. From a protected project, both of these take the photo out of the vault as an ordinary unprotected image, and whatever receives it keeps it \u2014 which is why it asks first, and why it needs the vault open to do it at all.',
-  'unlock':'Free covers three projects, with every feature switched on \u2014 photos, the vault, backups, the calculator. Unlocking lifts the limit on how many projects you keep, once, for one payment. Entering your key sends it to our payment provider a single time to activate it; after that Notebuilt never contacts anything again, and the unlock is never re-checked. The key is stored in your settings, so your backup carries it to your next phone.'
-};
+/* PIN_RECOVERY — the copy that stood here has moved into the
+   EGS-STD:infomode block, with the rest of it. Info mode inherited it,
+   which is what the note here always said would happen. maybeOfferRecoveryCode()
+   below still reads HELP_COPY['pin-recovery']; nothing about that changed. */
 
 function recoveryGenerate(){
   const bytes=crypto.getRandomValues(new Uint8Array(RECOVERY_LEN));
