@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.16-1020';</script>
+<script>window.EGS_VERSION = '2026.08.16-1027';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -2861,7 +2861,7 @@ function renderSettings(){
     <div class="card row" data-go="support" style="cursor:pointer"><div class="grow"><div>Support &amp; Backup</div><div class="muted" style="font-size:13px">Export/restore your data, and support EGS.</div></div><span class="chev">${I.chevronR}</span></div>
 
     <div class="sec-head"><span class="label">Privacy</span><span class="rule"></span></div>
-    <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What we collect, where your data lives, how we make money.</div></div><span class="chev">${I.chevronR}</span></div>
+    <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What I collect, where your data lives, how EGS makes money.</div></div><span class="chev">${I.chevronR}</span></div>
 
     <div class="sec-head"><span class="label">Appearance</span>${nbHelpMark('theme')}<span class="rule"></span></div>
     <div class="card row" data-help="theme"><div class="grow"><div>Theme</div><div class="muted" style="font-size:13px">${
@@ -5308,7 +5308,7 @@ function forgotDeadEnd(back){
   lockPrompt({
     title:'Forgot PIN',
     copy:'Nothing was set up on this device to get back in, so there is no way past this '
-        +'screen \u2014 not by us, not by anyone.<br><br>Your projects are still on the phone and '
+        +'screen \u2014 not by me, not by anyone.<br><br>Your projects are still on the phone and '
         +'still intact. If you have a backup file, install the app fresh and restore it: a backup '
         +'is not protected by the PIN, and restoring it lets you set a new one.',
     onBack:back, back:'Back to the keypad' });
