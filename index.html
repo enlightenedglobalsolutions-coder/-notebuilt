@@ -9,24 +9,70 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.15-1440';</script>
+<script>window.EGS_VERSION = '2026.08.16-0812';</script>
 <title>Notebuilt</title>
+<!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
+     purpose: it stamps the chosen mode on <html> so the very first paint is
+     already the right theme. Read only — it never writes, so the "nothing at
+     startup writes preferences" law holds. 'system' is stamped as itself and
+     left for the CSS media query to follow, which is why a live OS switch
+     needs no JavaScript. The status-bar colours live here, in one place, so
+     the toggle later cannot drift from what the first frame used. -->
+<script>window.NB_THEME_BAR={dark:'#15181D',light:'#F6F3EC'};
+(function(){var m='system';
+  try{var s=localStorage.getItem('notebuilt.theme');if(s==='light'||s==='dark')m=s;}catch(e){}
+  document.documentElement.setAttribute('data-theme',m);
+  var dark=(m==='dark')||(m==='system'&&!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches));
+  var t=document.querySelector('meta[name="theme-color"]');
+  if(t)t.setAttribute('content',dark?window.NB_THEME_BAR.dark:window.NB_THEME_BAR.light);})();</script>
 <style>
-  /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ---- */
+  /* ---- Design tokens: a leather field-notebook holding spec-stamp pages ----
+     EGS-STD:themes — §2 row 13 lives here, on the block it describes.
+
+     THE ROLE RULE, because this is the one that bites: --ink is always the
+     GROUND and --paper is always the TEXT ON IT. The names describe roles,
+     not brightnesses, and the values swap ends of the scale between themes.
+     Read every rule below as a role and it stays correct in both. Read one
+     as a colour — "--paper is the light one" — and it inverts in daylight.
+
+     The accent is split for the same reason, and the two halves always
+     appear together: --brass is the accent you READ (it deepens on paper or
+     it fails contrast), --brass-fill is the gold PLATE, and --on-brass is
+     the only thing ever written on that plate. Never put --paper or --ink on
+     a brass fill; --on-brass is what that is for.
+
+     Every text-on-ground pairing here was measured, not eyeballed, and
+     clears 4.5:1 in BOTH themes. --paper-faint, --doing and --danger were
+     lifted from their launch values, which did not: --paper-faint sat at
+     2.70:1 on a card while drawing the version stamp, to-do meta lines and
+     completed to-dos. The lift is the smallest hue-preserving step that
+     clears the bar, so the night theme still looks like itself. */
   :root{
-    --ink:#15181D;        /* notebook cover / app shell */
+    /* Night — the shipped identity, and the base every theme falls back to. */
+    --ink:#15181D;        /* GROUND: notebook cover / app shell */
     --ink-2:#1C2027;      /* raised surface */
     --ink-3:#252A33;      /* card */
-    --line:#333A45;       /* hairline rule (blueprint) */
+    --line:#333A45;       /* hairline rule (blueprint) — DECORATIVE */
     --line-soft:#2A2F39;
-    --paper:#ECE6D8;      /* light text on dark */
+    /* An outline that IS the control, where nothing else marks it: the
+       empty to-do punch, an unfilled PIN dot, the dashed add-photo tile.
+       >=3:1 on every ground, because that outline is information. Card
+       borders deliberately stay on --line and stay subtle. */
+    --line-strong:#67758B;
+    --paper:#ECE6D8;      /* TEXT on the ground */
     --paper-dim:#A7A294;  /* secondary text */
-    --paper-faint:#6E6B61;/* tertiary */
-    --brass:#D7A94B;      /* hardware accent */
-    --brass-deep:#9A6E27;
-    --doing:#6E92B8;      /* slate blue */
+    --paper-faint:#949186;/* tertiary — was #6E6B61, 2.70:1 on a card */
+    --brass:#D7A94B;      /* accent you READ */
+    --brass-fill:#D7A94B; /* accent as a PLATE */
+    --on-brass:#231A07;   /* the only ink that goes on that plate */
+    --doing:#7194B9;      /* slate blue — was #6E92B8, 4.44:1 on a card */
     --done:#7E9D63;       /* sage */
-    --danger:#C8654B;
+    --danger:#D07A64;     /* was #C8654B, 3.72:1 on a card */
+    --done-wash:rgba(126,157,99,.14);
+    --nav-bg:rgba(20,24,29,.92);
+    --scrim:rgba(0,0,0,.55);
+    --shadow-pop:0 8px 22px rgba(0,0,0,.45);
+    --shadow-card:0 8px 24px rgba(0,0,0,.4);
     --radius:14px;
     --radius-sm:10px;
     --tap:46px;
@@ -36,6 +82,69 @@
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
+
+  /* ---- Daylight: a spec sheet on a job-site table ----
+     Not an inversion of the night theme. Warm drafting paper, graphite
+     rules, the same brass — Notebuilt in a bright cab or out on a deck,
+     where a dark screen is a mirror. Elevation still runs the same
+     direction as at night (raised = further from the ground colour), so
+     every existing rule reads correctly without being rewritten.
+
+     ORDER MATTERS BELOW. The media block is guarded so an explicit choice
+     of night wins over a daylight phone, and the [data-theme="light"] block
+     is written AFTER it because the two have identical specificity — source
+     order is the only thing separating them. Moving either one breaks a
+     mode without breaking anything a quick look would catch. */
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --ink:#F6F3EC; --ink-2:#FBF9F3; --ink-3:#FFFFFF;
+      --line:#998F78; --line-soft:#C9C0AC; --line-strong:#8B8069;
+      --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C;
+      --brass:#855E11; --brass-fill:#D7A94B; --on-brass:#231A07;
+      --doing:#35608A; --done:#4A6B33; --danger:#A83E27;
+      --done-wash:rgba(74,107,51,.13);
+      --nav-bg:rgba(251,249,243,.92);
+      --scrim:rgba(38,32,20,.44);
+      --shadow-pop:0 8px 22px rgba(58,48,30,.20);
+      --shadow-card:0 8px 24px rgba(58,48,30,.15);
+    }
+  }
+  :root[data-theme="light"]{
+    --ink:#F6F3EC; --ink-2:#FBF9F3; --ink-3:#FFFFFF;
+    --line:#998F78; --line-soft:#C9C0AC; --line-strong:#8B8069;
+    --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C;
+    --brass:#855E11; --brass-fill:#D7A94B; --on-brass:#231A07;
+    --doing:#35608A; --done:#4A6B33; --danger:#A83E27;
+    --done-wash:rgba(74,107,51,.13);
+    --nav-bg:rgba(251,249,243,.92);
+    --scrim:rgba(38,32,20,.44);
+    --shadow-pop:0 8px 22px rgba(58,48,30,.20);
+    --shadow-card:0 8px 24px rgba(58,48,30,.15);
+  }
+
+  /* ---- Surfaces that are dark BY NATURE, in either theme ----
+     A photograph and a live lens are content, not chrome. They are judged
+     against a dark ground in daylight exactly as at night, the way every
+     photo app on the phone does it — so these four layers re-declare the
+     role tokens to their night values instead of inheriting the page's.
+
+     This is a scope, not a list of overrides, and that is the point: every
+     rule inside these layers already speaks in roles, so pinning the roles
+     once fixes all of them at a stroke. Without it, daylight paints dark
+     text onto near-black — #viewer .v-count is var(--paper-dim), and it
+     would simply disappear.
+
+     #vault is NOT here: the ceremony screen is chrome, and follows. Only
+     #vault-busy, the veil drawn over it while keys derive, is pinned. */
+  #viewer,#annotate,#camera,#vault-busy{
+    --ink:#15181D; --ink-2:#1C2027; --ink-3:#252A33;
+    --line:#333A45; --line-soft:#2A2F39; --line-strong:#67758B;
+    --paper:#ECE6D8; --paper-dim:#A7A294; --paper-faint:#949186;
+    --brass:#D7A94B; --brass-fill:#D7A94B; --on-brass:#231A07;
+    --doing:#7194B9; --done:#7E9D63; --danger:#D07A64;
+    color:var(--paper);
+  }
+
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%}
   body{
@@ -122,20 +231,23 @@
     padding:6px 12px;border-radius:999px;border:1px solid var(--line-soft);
     background:var(--ink-2);color:var(--paper-dim);white-space:nowrap;
   }
-  .chip-filter.active{background:var(--brass);color:#231a07;border-color:var(--brass)}
+  .chip-filter.active{background:var(--brass-fill);color:var(--on-brass);border-color:var(--brass-fill)}
   .cat-badge{font-size:15px;line-height:1;flex:none}
   .chip.status-quoting{color:var(--doing)}
   .chip.status-done{color:var(--done)}
 
   /* ---- Task row ---- */
   .task{display:flex;align-items:flex-start;gap:12px;padding:13px 14px}
+  /* --line-strong, not --line: until it is ticked this box is empty —
+     no fill, no glyph, no label — so the outline is the whole control.
+     The doing/done states below override the colour anyway. */
   .punch{
     flex:none;width:30px;height:30px;border-radius:8px;margin-top:1px;
-    border:1.5px solid var(--line);display:grid;place-items:center;
+    border:1.5px solid var(--line-strong);display:grid;place-items:center;
     color:var(--paper-faint);transition:.12s;
   }
   .punch.doing{border-color:var(--doing);color:var(--doing)}
-  .punch.done{border-color:var(--done);color:var(--done);background:rgba(126,157,99,.14)}
+  .punch.done{border-color:var(--done);color:var(--done);background:var(--done-wash)}
   .punch:active{transform:scale(.92)}
   .punch svg{width:16px;height:16px}
   .task .body{flex:1;min-width:0}
@@ -168,10 +280,13 @@
     padding:0;cursor:pointer;overflow:hidden;
   }
   .sorted-cell.is-current{border-color:var(--brass);box-shadow:0 0 0 2px var(--brass)}
+  /* Raw and dark on purpose, in both themes: this plate sits on a photo
+     thumbnail, and a photo is not chrome. Tokenising it would make the
+     badge pale-on-photo in daylight and lose the star. */
   .sorted-star{
     position:absolute;top:5px;right:5px;display:grid;place-items:center;
     width:26px;height:26px;border-radius:50%;
-    background:rgba(21,24,29,.72);color:var(--brass);
+    background:rgba(21,24,29,.72);color:#D7A94B;
   }
   .sorted-star svg{width:16px;height:16px}
   .house-card .hc-body{padding:12px 14px}
@@ -201,14 +316,16 @@
     aspect-ratio:1;border-radius:8px;background:var(--ink-2);
     background-size:cover;background-position:center;position:relative;
   }
+  /* Also on a photo, also raw in both themes — see .sorted-star. */
   .photo-grid .ph .x{
     position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:50%;
     background:rgba(0,0,0,.55);display:grid;place-items:center;color:#fff;
   }
   .photo-grid .ph .x svg{width:14px;height:14px}
   /* CHUNK2_PHOTO_LIBRARY */
+  /* The dashes are the affordance here, so they are information too. */
   .photo-add{
-    aspect-ratio:1;border:1.5px dashed var(--line);border-radius:8px;
+    aspect-ratio:1;border:1.5px dashed var(--line-strong);border-radius:8px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--paper-dim);
   }
   .photo-add svg{width:24px;height:24px}
@@ -232,7 +349,7 @@
     background:var(--ink-3);color:var(--paper);border:1px solid var(--line-soft);
   }
   .btn:active{transform:translateY(1px)}
-  .btn.primary{background:var(--brass);color:#231a07;border-color:var(--brass)}
+  .btn.primary{background:var(--brass-fill);color:var(--on-brass);border-color:var(--brass-fill)}
   .btn.danger{color:var(--danger);border-color:var(--danger)}
   .btn.block{display:flex;width:100%}
   .btn.sm{min-height:38px;padding:0 13px;font-size:14px}
@@ -242,8 +359,8 @@
   .fab{
     position:fixed;right:18px;z-index:30;
     bottom:calc(var(--tap) + var(--safe-b) + 92px);
-    width:58px;height:58px;border-radius:18px;background:var(--brass);color:#231a07;
-    display:grid;place-items:center;box-shadow:0 8px 22px rgba(0,0,0,.45);
+    width:58px;height:58px;border-radius:18px;background:var(--brass-fill);color:var(--on-brass);
+    display:grid;place-items:center;box-shadow:var(--shadow-pop);
   }
   .fab:active{transform:translateY(1px)}
   .fab svg{width:26px;height:26px}
@@ -251,7 +368,7 @@
   /* ---- Bottom nav ---- */
   .nav{
     position:fixed;left:0;right:0;bottom:0;z-index:25;
-    background:rgba(20,24,29,.92);backdrop-filter:blur(12px);
+    background:var(--nav-bg);backdrop-filter:blur(12px);
     border-top:1px solid var(--line-soft);
     padding-bottom:var(--safe-b);
     display:flex;
@@ -268,7 +385,7 @@
   /* 80 clears #viewer (60) and #annotate (70), which sheets are legitimately
      opened from, and stays below #lock (100), #vault (110), #camera (115) and
      #vault-busy (120) — the surfaces that must never have a sheet over them. */
-  .scrim{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+  .scrim{position:fixed;inset:0;z-index:80;background:var(--scrim);display:flex;align-items:flex-end}
   .sheet{
     background:var(--ink-2);width:100%;max-width:680px;margin:0 auto;
     border-radius:20px 20px 0 0;border-top:1px solid var(--line);
@@ -307,7 +424,9 @@
   #lock .name{font-family:var(--serif);font-size:24px}
   #lock .hint{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--paper-dim);margin-bottom:18px}
   .dots{display:flex;gap:14px;margin:8px 0 6px}
-  .dots .d{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line)}
+  /* An unfilled dot is only its outline, and counting the unfilled ones
+     is how you know how many digits you have entered. */
+  .dots .d{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line-strong)}
   .dots .d.on{background:var(--brass);border-color:var(--brass)}
   .keypad{display:grid;grid-template-columns:repeat(3,72px);gap:14px;margin-top:14px}
   .keypad button{
@@ -347,7 +466,7 @@
     position:fixed;left:12px;right:12px;bottom:calc(var(--safe-b) + 14px);z-index:40;
     background:var(--ink-3);border:1px solid var(--line);border-radius:var(--radius);
     padding:12px 10px 12px 16px;display:flex;align-items:center;gap:10px;
-    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    box-shadow:var(--shadow-card);
   }
   #install-banner .txt{flex:1;font-size:13px;line-height:1.4;color:var(--paper-dim)}
   #install-banner .txt b{color:var(--paper);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
@@ -357,7 +476,7 @@
     position:fixed;left:12px;right:12px;bottom:calc(var(--safe-b) + 14px);z-index:40;
     background:var(--ink-3);border:1px solid var(--line);border-radius:var(--radius);
     padding:12px 10px 12px 16px;display:flex;align-items:center;gap:10px;
-    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    box-shadow:var(--shadow-card);
   }
   #backup-banner .txt{flex:1;font-size:13px;line-height:1.4;color:var(--paper-dim)}
   #backup-banner .txt b{color:var(--paper);display:block;font-family:var(--serif);font-size:15px;margin-bottom:2px}
@@ -367,8 +486,8 @@
   #toast{
     position:fixed;left:50%;transform:translateX(-50%);z-index:200;
     bottom:calc(var(--tap) + var(--safe-b) + 96px);
-    background:var(--brass);color:#231a07;font-weight:600;font-size:14px;
-    padding:11px 18px;border-radius:12px;box-shadow:0 8px 22px rgba(0,0,0,.4);
+    background:var(--brass-fill);color:var(--on-brass);font-weight:600;font-size:14px;
+    padding:11px 18px;border-radius:12px;box-shadow:var(--shadow-card);
     opacity:0;transition:.2s;pointer-events:none;max-width:84%;text-align:center;
   }
   #toast.show{opacity:1}
@@ -405,7 +524,7 @@
     width:44px;height:44px;border-radius:10px;background:var(--ink-2);color:var(--paper-dim);
     display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:15px;flex:none;
   }
-  .a-tool.active{background:var(--brass);color:#231a07}
+  .a-tool.active{background:var(--brass-fill);color:var(--on-brass)}
   .a-tool svg{width:20px;height:20px}
   .a-swatches{display:flex;align-items:center;gap:8px;margin:0 4px;flex:none}
   .a-swatch{width:30px;height:30px;border-radius:50%;border:2px solid transparent;flex:none}
@@ -515,16 +634,16 @@
     border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--paper-dim);
     white-space:nowrap;flex:none;
   }
-  .cam-chip.on{background:var(--brass);border-color:var(--brass);color:#231a07}
+  .cam-chip.on{background:var(--brass-fill);border-color:var(--brass-fill);color:var(--on-brass)}
   /* CAM_TORCH — same footprint as the spacer opposite it, so the shutter
      stays centred whether or not this lens has a lamp. */
   .cam-flash{
     width:46px;height:46px;border-radius:50%;display:grid;place-items:center;flex:none;
     border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--paper-dim);
   }
-  .cam-flash.on{background:var(--brass);border-color:var(--brass);color:#231a07}
+  .cam-flash.on{background:var(--brass-fill);border-color:var(--brass-fill);color:var(--on-brass)}
   /* Continuous light gets its own colour as well as its own glyph. */
-  .cam-flash.torch{background:var(--paper);border-color:var(--paper);color:#15181D}
+  .cam-flash.torch{background:var(--paper);border-color:var(--paper);color:var(--ink)}
   .cam-flash svg{width:22px;height:22px}
   #camera .cam-shutter-row{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:4px}
   .cam-shutter{
@@ -556,7 +675,10 @@
   .meas-cell label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--paper-dim);margin-top:4px}
   .unit-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto}
   .unit-toggle button{background:transparent;color:var(--paper-dim);border:0;padding:5px 12px;font-size:12px;font-family:var(--mono);cursor:pointer}
-  .unit-toggle button.on{background:var(--brass);color:var(--ink)}
+  /* --on-brass, NOT --ink: --ink is the GROUND role, and in daylight the
+     ground is the pale one — this read as dark-on-gold only because night
+     was the only theme. This single line is the whole role-token lesson. */
+  .unit-toggle button.on{background:var(--brass-fill);color:var(--on-brass)}
   /* ---- Calculator ---- */
   .cecho{display:block;font-family:var(--mono);font-size:12px;color:var(--brass);margin-top:5px;min-height:15px}
   .crow{display:flex;gap:8px;margin:4px 0 12px}
@@ -664,7 +786,11 @@ const I = {
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   images:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 15.5l4.5-4.5 3 3 4-4.5 5.5 6"/><circle cx="8.5" cy="8.5" r="1.4"/></svg>',
-  square:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v15h15"/><path d="M5 4h6M5 9h4M5 14h4"/></svg>',
+  /* Three bars, longest first — the conventional sort mark. This slot
+     used to hold the RETIRED app logo under the name `square`, which is
+     how it survived the lock-screen redraw: nothing about the name said
+     it was a logo. Named for what it draws now. */
+  sort:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6.5h16M4 12h10.5M4 17.5h5"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>',
   rotate:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>',
   undo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.34-5.66"/><path d="M4 4v5h5"/></svg>',
@@ -1262,6 +1388,53 @@ const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'
 const now = ()=> Date.now();
 const todayKey = (d=new Date())=> d.toISOString().slice(0,10);
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ============================================================
+   EGS-STD:themes — day, night, and follow-the-phone
+   ============================================================
+   The <head> script did the part that matters for the first frame. Nothing
+   in this block runs early enough to prevent a flash of the wrong theme;
+   this half is the toggle, and keeping the status bar in step.
+
+   nbThemeMode() is a pure read and is safe to call at any time. The only
+   writer is nbSetTheme below, and only a tap reaches it — startup never
+   does. A fix-script guard pins that: the name may appear exactly twice in
+   the file, its definition and its one call site. */
+const NB_THEME_KEY='notebuilt.theme';
+function nbThemeMode(){
+  try{ const m=localStorage.getItem(NB_THEME_KEY); return (m==='light'||m==='dark')?m:'system'; }
+  catch(e){ return 'system'; }
+}
+const NB_THEME_LABEL={light:'Day',dark:'Night',system:'Auto'};
+/* What the phone would show right now, which is only the same as the mode
+   when the mode is not 'system'. Absent matchMedia, night — the identity. */
+function nbThemeIsDark(){
+  const m=nbThemeMode();
+  if(m!=='system') return m==='dark';
+  return !(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+}
+/* Colours come from the CSS; the status bar is the one thing that cannot,
+   so it is set here from the same NB_THEME_BAR the first frame used. */
+function nbApplyTheme(){
+  document.documentElement.setAttribute('data-theme',nbThemeMode());
+  const bar=window.NB_THEME_BAR||{dark:'#15181D',light:'#F6F3EC'};
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', nbThemeIsDark()?bar.dark:bar.light);
+}
+function nbSetTheme(mode){
+  if(mode!=='light'&&mode!=='dark') mode='system';
+  try{ localStorage.setItem(NB_THEME_KEY,mode); }catch(e){}
+  nbApplyTheme();
+}
+/* Following a live OS switch is the stylesheet's job — data-theme stays
+   'system' and the media query re-evaluates on its own. This listener is
+   here only for the status bar, which no media query can reach. */
+if(window.matchMedia){
+  const nbMQ=window.matchMedia('(prefers-color-scheme: light)');
+  const nbOnSystemChange=()=>{ if(nbThemeMode()==='system') nbApplyTheme(); };
+  if(nbMQ.addEventListener) nbMQ.addEventListener('change',nbOnSystemChange);
+  else if(nbMQ.addListener) nbMQ.addListener(nbOnSystemChange);
+}
 
 /* ---------- IndexedDB for photos (blobs, never uploaded) ---------- */
 let _db=null;
@@ -1888,7 +2061,7 @@ function taskRow(t){
 function renderHouses(){
   const sortLabel=(SORT_OPTIONS.find(o=>o.id===(settings.sortHouses||'updated'))||SORT_OPTIONS[0]).label;
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Projects</h1></div>
-    <button class="icon-btn" data-sort-houses aria-label="Sort projects: ${esc(sortLabel)}">${I.square}</button>
+    <button class="icon-btn" data-sort-houses aria-label="Sort projects: ${esc(sortLabel)}">${I.sort}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
   if(!houses.length) return head+`<div class="empty">${I.house}<div class="t">No projects yet</div><div>Add a project to keep its photos, notes and to-dos in one place — a job site, an app you're building, or anything else.</div></div>`;
   const hasUncategorized=houses.some(h=>!categoryById(h.category));
@@ -2423,13 +2596,13 @@ function renderSettings(){
   const locked=!!settings.pinHash;
   return `<div class="topbar"><div class="grow"><span class="eyebrow">${esc(APP_NAME)}</span><h1>Settings</h1></div></div>
   <div class="wrap">
-    ${settingsUnreadable?`<div class="card" style="border:1px solid var(--danger,#b5453b);margin-bottom:14px">
+    ${settingsUnreadable?`<div class="card" style="border:1px solid var(--danger);margin-bottom:14px">
       <div style="font-weight:600;margin-bottom:6px">Your saved settings could not be read</div>
       <div class="muted" style="font-size:13px;line-height:1.6">Your projects, notes, to-dos and photos are safe and untouched. What is in that file is your app lock, your vault passphrase record, your recovery code and your unlock.<br><br>
       Nothing has been overwritten — the damaged file is being left exactly as it is, and Notebuilt has stopped saving settings so it stays that way. Restore your most recent backup to put it right.<br><br>
       Until then, changes on this screen will not be remembered.</div>
     </div>`:''}
-    ${schemaFromFuture?`<div class="card" style="border:1px solid var(--gold,#C89F47);margin-bottom:14px">
+    ${schemaFromFuture?`<div class="card" style="border:1px solid var(--brass);margin-bottom:14px">
       <div style="font-weight:600;margin-bottom:6px">This data was saved by a newer Notebuilt</div>
       <div class="muted" style="font-size:13px;line-height:1.6">Your projects, notes, to-dos and photos are exactly as that version left them. Nothing has been converted and nothing has been dropped.<br><br>
       This copy of the app is older than the data it found, so it may not show everything the newer one stored, and edits made here may not carry back to it.<br><br>
@@ -2459,6 +2632,15 @@ function renderSettings(){
 
     <div class="sec-head"><span class="label">Privacy</span><span class="rule"></span></div>
     <div class="card row" data-go="privacy" style="cursor:pointer"><div class="grow"><div>Privacy & how this works</div><div class="muted" style="font-size:13px">What we collect, where your data lives, how we make money.</div></div><span class="chev">${I.chevronR}</span></div>
+
+    <div class="sec-head"><span class="label">Appearance</span><span class="rule"></span></div>
+    <div class="card row" data-help="theme"><div class="grow"><div>Theme</div><div class="muted" style="font-size:13px">${
+      nbThemeMode()==='system'
+        ? 'Following your phone \u2014 '+(nbThemeIsDark()?'night':'day')+' right now.'
+        : (nbThemeMode()==='light' ? 'Always daylight, even when your phone is set to night.'
+                                   : 'Always night, even when your phone is set to day.')}</div></div>
+      <div class="unit-toggle">${['light','dark','system'].map(m=>
+        `<button class="${nbThemeMode()===m?'on':''}" data-theme-set="${m}">${NB_THEME_LABEL[m]}</button>`).join('')}</div></div>
 
     <div class="sec-head"><span class="label">Units</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Measurements</div><div class="muted" style="font-size:13px">Default for the calculator and measurement fields. You can switch per screen too.</div></div>
@@ -2814,6 +2996,9 @@ function bind(){
   $app.querySelectorAll('[data-calc-mode]').forEach(b=>b.onclick=()=>{ CALC.mode=b.dataset.calcMode; render(); });
   $app.querySelectorAll('[data-calc-op]').forEach(b=>b.onclick=()=>{ var o=b.dataset.calcOp; if(o==="*"||o==="/") CALC.opmd=o; else CALC.op=o; render(); });
   $app.querySelectorAll('[data-calc-clear]').forEach(b=>b.onclick=()=>calcClear());
+  /* Its own key, not settings — so this deliberately does NOT go through
+     persist.settings(). See the EGS-STD:themes block for why. */
+  $app.querySelectorAll('[data-theme-set]').forEach(b=>b.onclick=()=>{ nbSetTheme(b.dataset.themeSet); render(); toast('Theme: '+NB_THEME_LABEL[nbThemeMode()]); });
   $app.querySelectorAll('[data-units-set]').forEach(b=>b.onclick=()=>{ settings.units=b.dataset.unitsSet; persist.settings(); render(); });
   $app.querySelectorAll('[data-photo-preset]').forEach(b=>b.onclick=()=>{ settings.photoPreset=b.dataset.photoPreset; persist.settings(); render(); toast('Capture size: '+PHOTO_PRESETS[photoPresetKey()].label); });
   function calcBindWidget(id, slot){
@@ -4772,6 +4957,7 @@ const RECOVERY_LEN=16;   /* 16 chars from 32 symbols = 80 bits */
 
 /* PIN_RECOVERY — info-mode copy, planted now so info mode inherits it. */
 const HELP_COPY={
+  'theme':'Day is for bright cabs and outdoors, where a dark screen turns into a mirror. Night is the notebook you know. Auto follows whatever your phone is set to, and changes with it. This one is kept per device, not in your backup \u2014 the phone in the truck and the tablet on the bench can each be set to suit where they are used.',
   'pin-recovery':'Your PIN keeps casual hands out of the app. It does not encrypt anything \u2014 the vault passphrase does.',
   'photo-send':'Share hands the image straight to another app on this phone \u2014 your workforce app, a message, email. Save to device puts a copy in your Downloads folder, which is not the same place as your camera roll; your gallery may not show it. Only the picture is sent: no project name, no address, nothing about where it was taken. From a protected project, both of these take the photo out of the vault as an ordinary unprotected image, and whatever receives it keeps it \u2014 which is why it asks first, and why it needs the vault open to do it at all.',
   'unlock':'Free covers three projects, with every feature switched on \u2014 photos, the vault, backups, the calculator. Unlocking lifts the limit on how many projects you keep, once, for one payment. Entering your key sends it to our payment provider a single time to activate it; after that Notebuilt never contacts anything again, and the unlock is never re-checked. The key is stored in your settings, so your backup carries it to your next phone.'

@@ -3,3 +3,4 @@
 .DS_Store
 notebuilt-notepad-n.html
 CLAUDE.md
+__pycache__/
