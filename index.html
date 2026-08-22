@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.22-1121 (bf9cb9a)';</script>
+<script>window.EGS_VERSION = '2026.08.22-1136 (d50edf6)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -4186,8 +4186,16 @@ function captureActive(){ return _captureAt !== 0; }
    both count as "busy": neither may be interrupted by a service-worker
    activation, which reloads the page and drops whatever's in memory. Read by
    the BOOT registration below, and re-checked at the two places that can end
-   a busy spell: vaultRelock() and captureEnd(). */
-function vaultBusy(){ return vaultUnlocked() || captureActive(); }
+   a busy spell: vaultRelock() and captureEnd().
+   Named swUpdateBlocked(), NOT vaultBusy() — vaultBusy(title,sub,pct) already
+   exists below as the encrypt/decrypt progress overlay. Two same-named
+   top-level function declarations don't error or warn; the later one silently
+   wins for every caller via hoisting. That collision was shipped 2026-08-22:
+   every gate check below was actually invoking the overlay with no args —
+   painting a full-screen #vault-busy shade on every update check, and always
+   evaluating truthy (a Promise), so the update never applied even when
+   locked. Keep this name distinct. */
+function swUpdateBlocked(){ return vaultUnlocked() || captureActive(); }
 function captureBegin(){
   _captureAt = now();
   clearTimeout(_captureTimer);
@@ -5925,18 +5933,18 @@ async function vaultDeleteLocked(houseId){
 /* EGS standard PWA registration — update banner + version stamp.
    VAULT_SW_GATE (notebuilt only): a finished update normally activates the
    instant it's installed. Here, if the vault is busy (unlocked, or a photo
-   capture is mid-flight — see vaultBusy() above) the waiting worker is held
-   instead: the banner still shows, but no SKIP_WAITING message is sent until
-   vaultRelock() or captureEnd() confirms it's safe. Locked-and-idle — the
-   normal state — is unaffected: it applies the instant it's ready, same as
-   every other EGS app. */
+   capture is mid-flight — see swUpdateBlocked() above) the waiting worker is
+   held instead: the banner still shows, but no SKIP_WAITING message is sent
+   until vaultRelock() or captureEnd() confirms it's safe. Locked-and-idle —
+   the normal state — is unaffected: it applies the instant it's ready, same
+   as every other EGS app. */
 (function(){
   window.egsApplyPendingUpdateIfReady=function(){};   /* no-op unless SW support wires the real one in below */
   if(!('serviceWorker' in navigator)) return;
   var reg=null, pendingUpdate=false;
   function applyWaiting(){ if(reg && reg.waiting) reg.waiting.postMessage('SKIP_WAITING'); }
   window.egsApplyPendingUpdateIfReady=function(){
-    if(!pendingUpdate || vaultBusy()) return;
+    if(!pendingUpdate || swUpdateBlocked()) return;
     pendingUpdate=false;
     applyWaiting();
   };
@@ -5947,13 +5955,13 @@ async function vaultDeleteLocked(houseId){
          (e.g. the tab closed before it ever unlocked or relocked, so nothing
          ever told it to go) — 'updatefound' won't fire again for it, so check
          directly or it would wait forever. */
-      if(reg.waiting){ egsUpdateBanner(); if(vaultBusy()) pendingUpdate=true; else applyWaiting(); }
+      if(reg.waiting){ egsUpdateBanner(); if(swUpdateBlocked()) pendingUpdate=true; else applyWaiting(); }
       reg.addEventListener('updatefound', function(){
         var nw=reg.installing; if(!nw) return;
         nw.addEventListener('statechange', function(){
           if(nw.state==='installed' && navigator.serviceWorker.controller){
             egsUpdateBanner();
-            if(vaultBusy()) pendingUpdate=true; else applyWaiting();
+            if(swUpdateBlocked()) pendingUpdate=true; else applyWaiting();
           }
         });
       });
@@ -5969,7 +5977,10 @@ async function vaultDeleteLocked(houseId){
     b.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#C9A227;color:#15181D;font:600 15px -apple-system,Segoe UI,Roboto,sans-serif;padding:13px 16px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;align-items:center;gap:12px';
     b.innerHTML='<span style="flex:1">A new version is ready.</span><button id="egs-upd-btn" style="background:#15181D;color:#fff;border:0;border-radius:8px;padding:9px 15px;font:inherit;cursor:pointer">Refresh</button>';
     document.body.appendChild(b);
-    document.getElementById('egs-upd-btn').onclick=function(){ location.reload(); };
+    document.getElementById('egs-upd-btn').onclick=function(){
+      this.disabled=true; this.textContent='Updating…';   /* the tap itself had no feedback before */
+      location.reload();
+    };
   }
 })();
 /* CHUNK18_INSTALL_PROMPT */
