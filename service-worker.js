@@ -1,5 +1,12 @@
 /* ============================================================================
-   EGS STANDARD SERVICE WORKER  —  identical across every EGS app.
+   EGS STANDARD SERVICE WORKER — identical across every EGS app, EXCEPT the
+   install handler below: notebuilt is the one EGS app with a vault key that
+   lives only in page memory, so it's the one app where an instant activation
+   (skipWaiting -> clients.claim -> reload) can silently drop that key mid-use.
+   Every other app still self-activates on install; here activation waits for
+   an explicit SKIP_WAITING message that index.html only sends once the vault
+   is locked and no capture is in flight. See VAULT_SW_GATE in index.html.
+
    You change ONE line per app: APP_NAME. egs-deploy.sh stamps CACHE_VERSION
    on every deploy. The caching DECISIONS live in sw_logic.js (unit-tested);
    this worker imports and runs that exact code, so what's tested is what ships.
@@ -12,7 +19,7 @@
 importScripts('./sw_logic.js');   // provides self.EGS_SW
 
 const APP_NAME      = 'notebuilt';   // <-- the ONE line you change per app
-const CACHE_VERSION = '2026.08.16-1027';             // <-- egs-deploy.sh stamps this each deploy
+const CACHE_VERSION = '2026.08.22-1121';             // <-- egs-deploy.sh stamps this each deploy
 const CACHE = EGS_SW.cacheName(APP_NAME, CACHE_VERSION);
 
 // Offline shell. For single-file apps this is basically index.html + icons.
@@ -25,8 +32,19 @@ self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
       .then((c) => c.addAll(SHELL).catch(() => {}))   // tolerate a missing asset
-      .then(() => self.skipWaiting())                  // take over without waiting for old tabs
+    // VAULT_SW_GATE: no self.skipWaiting() here. With no prior controller
+    // (first install ever) the browser activates this worker on its own —
+    // nothing changes for a fresh install. With a prior controller (an
+    // update), this worker now WAITS until the page tells it to go, via the
+    // 'message' listener below. That page-side gate is what makes it safe
+    // for this one app to defer activation without touching the network-first
+    // fetch path (unchanged below) or breaking every other EGS app's
+    // instant-activate behavior.
   );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data === 'SKIP_WAITING') self.skipWaiting();   // sent only when index.html has confirmed it's safe
 });
 
 self.addEventListener('activate', (e) => {

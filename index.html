@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<script>window.EGS_VERSION = '2026.08.16-1027';</script>
+<script>window.EGS_VERSION = '2026.08.22-1121 (bf9cb9a)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -1882,6 +1882,7 @@ function vaultRelock(silent){
     if(u){ URL.revokeObjectURL(u); _objUrls.delete(id); }
   }
   _vaultUrlIds.clear();
+  window.egsApplyPendingUpdateIfReady();   /* VAULT_SW_GATE — relock may be the last thing blocking a deferred update */
   if(!wasOpen) return;
   try{ if(vw && vw.houseId && isProtected(vw.houseId)) closeViewer(); }catch(e){}
   try{ if(an && an.houseId && isProtected(an.houseId)) closeAnnotate(); }catch(e){}
@@ -4181,6 +4182,12 @@ let _captureTimer = null;
 let _captureSettle = null;
 
 function captureActive(){ return _captureAt !== 0; }
+/* VAULT_SW_GATE — a live derived key or an in-flight envelope capture write
+   both count as "busy": neither may be interrupted by a service-worker
+   activation, which reloads the page and drops whatever's in memory. Read by
+   the BOOT registration below, and re-checked at the two places that can end
+   a busy spell: vaultRelock() and captureEnd(). */
+function vaultBusy(){ return vaultUnlocked() || captureActive(); }
 function captureBegin(){
   _captureAt = now();
   clearTimeout(_captureTimer);
@@ -4192,6 +4199,7 @@ function captureEnd(){
   _captureAt = 0;
   clearTimeout(_captureTimer); _captureTimer = null;
   clearTimeout(_captureSettle); _captureSettle = null;
+  window.egsApplyPendingUpdateIfReady();   /* VAULT_SW_GATE — capture finishing may be the last thing blocking a deferred update */
 }
 
 /* VAULT_ENVELOPE — the memory-hold that used to live here is gone. Nothing is
@@ -5914,15 +5922,39 @@ async function vaultDeleteLocked(houseId){
 /* ============================================================
    BOOT
    ============================================================ */
-/* EGS standard PWA registration — update banner + version stamp */
+/* EGS standard PWA registration — update banner + version stamp.
+   VAULT_SW_GATE (notebuilt only): a finished update normally activates the
+   instant it's installed. Here, if the vault is busy (unlocked, or a photo
+   capture is mid-flight — see vaultBusy() above) the waiting worker is held
+   instead: the banner still shows, but no SKIP_WAITING message is sent until
+   vaultRelock() or captureEnd() confirms it's safe. Locked-and-idle — the
+   normal state — is unaffected: it applies the instant it's ready, same as
+   every other EGS app. */
 (function(){
+  window.egsApplyPendingUpdateIfReady=function(){};   /* no-op unless SW support wires the real one in below */
   if(!('serviceWorker' in navigator)) return;
+  var reg=null, pendingUpdate=false;
+  function applyWaiting(){ if(reg && reg.waiting) reg.waiting.postMessage('SKIP_WAITING'); }
+  window.egsApplyPendingUpdateIfReady=function(){
+    if(!pendingUpdate || vaultBusy()) return;
+    pendingUpdate=false;
+    applyWaiting();
+  };
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('service-worker.js').then(function(reg){
+    navigator.serviceWorker.register('service-worker.js').then(function(r){
+      reg=r;
+      /* A worker can already be sitting in 'waiting' from an earlier session
+         (e.g. the tab closed before it ever unlocked or relocked, so nothing
+         ever told it to go) — 'updatefound' won't fire again for it, so check
+         directly or it would wait forever. */
+      if(reg.waiting){ egsUpdateBanner(); if(vaultBusy()) pendingUpdate=true; else applyWaiting(); }
       reg.addEventListener('updatefound', function(){
         var nw=reg.installing; if(!nw) return;
         nw.addEventListener('statechange', function(){
-          if(nw.state==='installed' && navigator.serviceWorker.controller) egsUpdateBanner();
+          if(nw.state==='installed' && navigator.serviceWorker.controller){
+            egsUpdateBanner();
+            if(vaultBusy()) pendingUpdate=true; else applyWaiting();
+          }
         });
       });
     }).catch(function(){});
