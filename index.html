@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- test deploy 2026-08-26 (2/3): confirming deferred SW activation on device -->
-<script>window.EGS_VERSION = '2026.08.26-1441 (8c50aa8)';</script>
+<script>window.EGS_VERSION = '2026.08.26-1502 (6af65fe)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -2199,6 +2199,18 @@ function autosaveOpenNote(){
   const houseSel=$app.querySelector('#note-house'); const houseId=houseSel?houseSel.value||null:null;
   const impEl=$app.querySelector('#note-important'); const important=impEl?impEl.checked:false;
   if(!title && !body.trim()) return;               // nothing worth saving
+  /* AUTOSAVE_CLAIM — render()'s own call, visibilitychange and pagehide can all
+     fire for ONE leave (a Refresh-triggered reload fires both of the latter
+     before the page unloads). Each used to treat id==='new' literally and push
+     ANOTHER note record — 2026-08-26: 6 triggers, 6 copies. Claim this exact
+     content synchronously, before any write, so every trigger after the first
+     no-ops. Keyed on content, not a one-shot flag, because the SAME open editor
+     legitimately re-saves later if the user backgrounds, keeps typing, then
+     leaves again — reset in renderNote() so a freshly opened editor isn't stuck
+     behind a coincidentally-identical snapshot from whatever was open before. */
+  const snapshot=id+'|'+title+'|'+body+'|'+houseId+'|'+important;
+  if(snapshot===_lastAutosavedSnapshot) return;
+  _lastAutosavedSnapshot=snapshot;
   /* VAULT_TOGGLE — into a protected project, seal before persisting. This runs
      synchronously from render(), so the write is deferred to the seal's promise
      rather than being made async: a crash mid-edit loses the edit, never leaks it. */
@@ -2216,6 +2228,7 @@ function autosaveOpenNote(){
   }
 }
 let _lastAutosavedNewId=null;
+let _lastAutosavedSnapshot=null;   /* AUTOSAVE_CLAIM — see autosaveOpenNote(); reset in renderNote() */
 /* EGS-STD:coldopen-version — one source (window.EGS_VERSION), one renderer.
    The stamp used to exist only inside renderSettings(), so a fresh visitor —
    who lands on the to-do list, or on the keypad — could not answer "is this
@@ -2464,6 +2477,7 @@ function renderNotes(){
 }
 
 function renderNote(id){
+  _lastAutosavedSnapshot=null;   /* AUTOSAVE_CLAIM — a freshly painted editor starts unclaimed */
   const isNew=id==='new';
   const presetHouseId=pendingNoteHouseId; pendingNoteHouseId=null;
   const n=isNew?{title:'',body:'',houseId:presetHouseId,important:false}:notes.find(x=>x.id===id)||{title:'',body:'',houseId:null,important:false};
