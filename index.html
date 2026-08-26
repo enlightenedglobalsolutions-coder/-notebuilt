@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- test deploy 2026-08-22: confirms the swUpdateBlocked() fix on device -->
-<script>window.EGS_VERSION = '2026.08.22-1222 (31305a5)';</script>
+<script>window.EGS_VERSION = '2026.08.26-1429 (ebd80a8)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -2222,7 +2222,9 @@ let _lastAutosavedNewId=null;
    the update?" without navigating into Settings first. That is not the first
    screen, which is what the standard asks for. */
 function versionStamp(){
-  return '<div class="ver-stamp">'+esc(window.EGS_VERSION||'dev build')+'</div>';
+  /* The parenthetical SHA names the commit before this build, not this one —
+     a commit cannot embed its own final hash. See egs-deploy.sh. */
+  return '<div class="ver-stamp" title="Commit shown is the one before this build, not this one — a build cannot embed its own final hash.">'+esc(window.EGS_VERSION||'dev build')+'</div>';
 }
 
 function render(){
