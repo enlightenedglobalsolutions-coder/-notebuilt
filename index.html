@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- test deploy 2026-08-26: confirming the autosave claim-once guard on device -->
-<script>window.EGS_VERSION = '2026.08.26-1542 (4dc6c70)';</script>
+<script>window.EGS_VERSION = '2026.08.30-0959 (b326d88)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -5995,8 +5995,20 @@ async function vaultDeleteLocked(houseId){
     b.innerHTML='<span style="flex:1">A new version is ready.</span><button id="egs-upd-btn" style="background:#15181D;color:#fff;border:0;border-radius:8px;padding:9px 15px;font:inherit;cursor:pointer">Refresh</button>';
     document.body.appendChild(b);
     document.getElementById('egs-upd-btn').onclick=function(){
-      this.disabled=true; this.textContent='Updating…';   /* the tap itself had no feedback before */
-      location.reload();
+      /* VAULT_SW_GATE — this tap used to call location.reload() straight,
+         bypassing the gate below entirely: the reload tore down the page
+         (and with it the in-memory vault key) as a side effect of navigation,
+         not as a deliberate lock. Route it through the same check the
+         automatic path uses instead, so a vault unlocked mid-job waits for
+         its own lock rather than the tap forcing one. */
+      if(swUpdateBlocked()){
+        pendingUpdate=true;
+        this.disabled=true; this.textContent='Will apply once the vault locks';
+        return;
+      }
+      this.disabled=true; this.textContent='Updating…';
+      pendingUpdate=false;
+      applyWaiting();
     };
   }
 })();
