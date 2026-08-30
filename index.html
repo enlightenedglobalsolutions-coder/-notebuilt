@@ -9,8 +9,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
-<!-- test deploy 2026-08-30 (3/3): confirming the sw-update-poll fires on device -->
-<script>window.EGS_VERSION = '2026.08.30-1112 (27dceb2)';</script>
+<!-- sw-update-poll interval set to its real 20 min value, device-confirmed at 5 -->
+<script>window.EGS_VERSION = '2026.08.30-1117 (0292cf6)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -5997,7 +5997,7 @@ async function vaultDeleteLocked(houseId){
        and every time the tab returns to the foreground (camera hand-off,
        screen lock, app switch — the ordinary ways this app gets backgrounded
        and un-backgrounded without ever fully closing). */
-    var SW_UPDATE_POLL_MS = 5*60*1000;   /* TEMP 2026-08-30 for device testing — put back to 20*60*1000 once the poll is confirmed to fire */
+    var SW_UPDATE_POLL_MS = 20*60*1000;
     function checkForUpdate(){ if(reg && document.visibilityState==='visible') reg.update().catch(function(){}); }
     setInterval(checkForUpdate, SW_UPDATE_POLL_MS);
     document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') checkForUpdate(); });
