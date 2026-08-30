@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- test deploy 2026-08-30 (2/3): confirming the gated Refresh tap on device -->
-<script>window.EGS_VERSION = '2026.08.30-1035 (782d3ef)';</script>
+<script>window.EGS_VERSION = '2026.08.30-1109 (37aa362)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -5993,12 +5993,13 @@ async function vaultDeleteLocked(houseId){
        (hours, browser's choice). Without asking ourselves, a deploy can sit
        unnoticed for as long as this tab stays open — cold launch is the only
        thing that would ever see it. reg.update() is a cheap no-op when
-       nothing changed, so ask on an hourly timer (a session left open all
-       day) and every time the tab returns to the foreground (camera
-       hand-off, screen lock, app switch — the ordinary ways this app gets
-       backgrounded and un-backgrounded without ever fully closing). */
+       nothing changed, so ask on a timer (a session left open for a while)
+       and every time the tab returns to the foreground (camera hand-off,
+       screen lock, app switch — the ordinary ways this app gets backgrounded
+       and un-backgrounded without ever fully closing). */
+    var SW_UPDATE_POLL_MS = 5*60*1000;   /* TEMP 2026-08-30 for device testing — put back to 20*60*1000 once the poll is confirmed to fire */
     function checkForUpdate(){ if(reg && document.visibilityState==='visible') reg.update().catch(function(){}); }
-    setInterval(checkForUpdate, 60*60*1000);
+    setInterval(checkForUpdate, SW_UPDATE_POLL_MS);
     document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') checkForUpdate(); });
   });
   function egsUpdateBanner(){
