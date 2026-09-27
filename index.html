@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- sw-update-poll interval set to its real 20 min value, device-confirmed at 5 -->
-<script>window.EGS_VERSION = '2026.09.27-1055 (4526af3)';</script>
+<script>window.EGS_VERSION = '2026.09.27-1309 (146341f)';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -63,6 +63,7 @@
     --paper:#ECE6D8;      /* TEXT on the ground */
     --paper-dim:#A7A294;  /* secondary text */
     --paper-faint:#949186;/* tertiary — was #6E6B61, 2.70:1 on a card */
+    --placeholder:#7C7A74;/* hint in an EMPTY box: >=3:1, <4.5:1 — dimmer than any text, see audit_contrast.py */
     --brass:#D7A94B;      /* accent you READ */
     --brass-fill:#D7A94B; /* accent as a PLATE */
     --on-brass:#231A07;   /* the only ink that goes on that plate */
@@ -100,7 +101,7 @@
     :root:not([data-theme="dark"]){
       --ink:#F6F3EC; --ink-2:#FBF9F3; --ink-3:#FFFFFF;
       --line:#998F78; --line-soft:#C9C0AC; --line-strong:#8B8069;
-      --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C;
+      --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C; --placeholder:#87847C;
       --brass:#855E11; --brass-fill:#D7A94B; --on-brass:#231A07;
       --doing:#35608A; --done:#4A6B33; --danger:#A83E27;
       --done-wash:rgba(74,107,51,.13);
@@ -113,7 +114,7 @@
   :root[data-theme="light"]{
     --ink:#F6F3EC; --ink-2:#FBF9F3; --ink-3:#FFFFFF;
     --line:#998F78; --line-soft:#C9C0AC; --line-strong:#8B8069;
-    --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C;
+    --paper:#1E222A; --paper-dim:#55595F; --paper-faint:#68655C; --placeholder:#87847C;
     --brass:#855E11; --brass-fill:#D7A94B; --on-brass:#231A07;
     --doing:#35608A; --done:#4A6B33; --danger:#A83E27;
     --done-wash:rgba(74,107,51,.13);
@@ -140,7 +141,7 @@
   #viewer,#annotate,#camera,#vault-busy{
     --ink:#15181D; --ink-2:#1C2027; --ink-3:#252A33;
     --line:#333A45; --line-soft:#2A2F39; --line-strong:#67758B;
-    --paper:#ECE6D8; --paper-dim:#A7A294; --paper-faint:#949186;
+    --paper:#ECE6D8; --paper-dim:#A7A294; --paper-faint:#949186; --placeholder:#7C7A74;
     --brass:#D7A94B; --brass-fill:#D7A94B; --on-brass:#231A07;
     --doing:#7194B9; --done:#7E9D63; --danger:#D07A64;
     color:var(--paper);
@@ -158,7 +159,7 @@
   }
   button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
   input,textarea,select{font-family:inherit;font-size:16px;color:var(--paper)}
-  ::placeholder{color:var(--paper-faint)}
+  ::placeholder{color:var(--placeholder);opacity:1}   /* th_nb_calc_placeholder: its own token, so a hint never reads as a typed value */
 
   /* ---- App frame ---- */
   #app{
@@ -2845,15 +2846,15 @@ function measWidget(id, inches, mode){
   if (mode === "metric"){
     var v = (inches!=null) ? inchesToMetric(inches) : {m:"",cm:""};
     return '<div class="meas" data-meas="'+id+'" data-mode="metric">'
-      + '<span class="meas-cell"><input '+box+' data-meas-m value="'+v.m+'" placeholder="0"><label>m</label></span>'
-      + '<span class="meas-cell"><input '+box+' data-meas-cm value="'+v.cm+'" placeholder="0"><label>cm</label></span>'
+      + '<span class="meas-cell"><input '+box+' data-meas-m value="'+v.m+'" placeholder=""><label>m</label></span>'
+      + '<span class="meas-cell"><input '+box+' data-meas-cm value="'+v.cm+'" placeholder=""><label>cm</label></span>'
       + '</div>';
   } else {
     var w = (inches!=null) ? inchesToImperial(inches) : {ft:"",in:"",frac:""};
     return '<div class="meas" data-meas="'+id+'" data-mode="imperial">'
-      + '<span class="meas-cell"><input '+box+' data-meas-ft value="'+w.ft+'" placeholder="0"><label>ft</label></span>'
-      + '<span class="meas-cell"><input '+box+' data-meas-in value="'+w.in+'" placeholder="0"><label>in</label></span>'
-      + '<span class="meas-cell"><input class="input meas-box" autocomplete="off" data-meas-frac value="'+w.frac+'" placeholder="0"><label>frac</label></span>'
+      + '<span class="meas-cell"><input '+box+' data-meas-ft value="'+w.ft+'" placeholder=""><label>ft</label></span>'
+      + '<span class="meas-cell"><input '+box+' data-meas-in value="'+w.in+'" placeholder=""><label>in</label></span>'
+      + '<span class="meas-cell"><input class="input meas-box" autocomplete="off" data-meas-frac value="'+w.frac+'" placeholder="3/8…"><label>frac</label></span>'
       + '</div>';
   }
 }
@@ -3037,7 +3038,7 @@ function renderCalc(){
     +'<div class="crow">'+ops.map(function(o){return '<button class="btn '+(calcOpFor(m)===o[1]?'primary':'')+'" data-calc-op="'+o[1]+'">'+o[0]+'</button>';}).join("")+'</div>'
     +(m==="tape"
        ? '<div class="field"><label>Second measurement</label>'+measWidget("c-b",CALC.b,mode)+'<span class="cecho">'+(CALC.b!=null?measEcho(CALC.b,mode):"")+'</span></div>'
-       : '<div class="field"><label>'+(calcOpFor(m)==="*"?"Times (number)":"Divide by (number)")+'</label><input class="input" id="c-num" inputmode="decimal" value="'+esc(CALC.num)+'" placeholder="3" autocomplete="off"></div>')
+       : '<div class="field"><label>'+(calcOpFor(m)==="*"?"Times (number)":"Divide by (number)")+'</label><input class="input" id="c-num" inputmode="decimal" value="'+esc(CALC.num)+'" placeholder="how many" autocomplete="off"></div>')
     +calcResultBlock(m);
   } else if(m==="bf"){
     body=''

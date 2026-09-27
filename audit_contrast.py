@@ -43,6 +43,15 @@ Two pairings are checked on their own terms:
                                --line stays decorative and is reported, not
                                gated.
 
+  --placeholder                a BAND, not a floor: >=3:1 on every ground, so
+                               the hint is findable in sun, AND <4.5:1 on the
+                               input ground (--ink-2), so it is always dimmer
+                               than any text. The ceiling is the point — a
+                               placeholder at text contrast reads as a typed
+                               value (th_nb_calc_placeholder: an empty FT box
+                               read as 0). Raising it to "fix" legibility
+                               reopens that thread, so the audit refuses.
+
 CONTEXTS
 --------
   night     :root
@@ -70,6 +79,7 @@ GROUNDS = ["--ink", "--ink-2", "--ink-3"]
 
 AA_TEXT = 4.5      # WCAG AA, normal text
 AA_UI = 3.0        # WCAG AA, non-text UI component
+HINT_GROUND = "--ink-2"   # what .input draws on — the placeholder's ceiling is measured here
 
 
 # ---------- colour maths ----------
@@ -189,6 +199,34 @@ def audit(contexts, verbose=False):
                              f"{'--line-strong':<14} on {ground:<8} {r:5.2f}:1"
                              f"   (UI bar {AA_UI})")
 
+        # a hint in an empty box: the 3:1 floor on every ground, and a
+        # ceiling under text contrast on the input ground
+        if "--placeholder" not in t:
+            failures.append(f"{name}: --placeholder is undefined")
+        else:
+            for ground in GROUNDS:
+                r = contrast(t["--placeholder"], t[ground])
+                ok = r >= AA_UI
+                if not ok:
+                    failures.append(
+                        f"{name}: --placeholder ({t['--placeholder']}) on {ground} "
+                        f"({t[ground]}) = {r:.2f}:1, needs {AA_UI}")
+                if verbose or not ok:
+                    lines.append(f"    {'ok  ' if ok else 'FAIL'}  "
+                                 f"{'--placeholder':<14} on {ground:<8} {r:5.2f}:1"
+                                 f"   (hint floor {AA_UI})")
+            r = contrast(t["--placeholder"], t[HINT_GROUND])
+            ok = r < AA_TEXT
+            if not ok:
+                failures.append(
+                    f"{name}: --placeholder ({t['--placeholder']}) on {HINT_GROUND} "
+                    f"= {r:.2f}:1 — at text contrast a hint reads as a typed value; "
+                    f"must stay under {AA_TEXT}")
+            if verbose or not ok:
+                lines.append(f"    {'ok  ' if ok else 'FAIL'}  "
+                             f"{'--placeholder':<14} on {HINT_GROUND:<8} {r:5.2f}:1"
+                             f"   (hint ceiling <{AA_TEXT})")
+
         # decorative — reported so a drift is visible, never gated
         if verbose:
             for ground in GROUNDS:
@@ -206,7 +244,8 @@ def main(argv):
     failures, lines = audit(contexts, verbose=verbose)
 
     checked = len(contexts) * (len(TEXT_ROLES) * len(GROUNDS)
-                               + 1 + len(GROUNDS))
+                               + 1 + len(GROUNDS)      # plate, outline
+                               + len(GROUNDS) + 1)     # hint floor, hint ceiling
     print(f"Notebuilt contrast audit — {checked} gated pairings across "
           f"{len(contexts)} contexts")
     print("".join(l + "\n" for l in lines), end="")
@@ -217,7 +256,7 @@ def main(argv):
             print("   ! " + f)
         return 1
     print(f"\n✅ all {checked} gated pairings pass "
-          f"(text {AA_TEXT}:1, UI {AA_UI}:1)")
+          f"(text {AA_TEXT}:1, UI {AA_UI}:1, hint {AA_UI}–<{AA_TEXT}:1)")
     return 0
 
 
