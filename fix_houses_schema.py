@@ -309,6 +309,10 @@ if((schemaFromFuture||housesFromFuture) && !settingsUnreadable){"""
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     bak = TARGET.with_name(f"{TARGET.name}.bak.{stamp}")
+    n = 1
+    while bak.exists():          # never overwrite an earlier backup (same-second runs)
+        n += 1
+        bak = TARGET.with_name(f"{TARGET.name}.bak.{stamp}-{n}")
     shutil.copy2(TARGET, bak)
     TARGET.write_text(working, encoding="utf-8")
     print(f"✅ applied {len(edits)} edits. Backup: {bak}")
