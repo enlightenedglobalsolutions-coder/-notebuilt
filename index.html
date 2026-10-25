@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- sw-update-poll interval set to its real 20 min value, device-confirmed at 5 -->
-<script>window.EGS_VERSION = '2026.10.25-0947';</script>
+<script>window.EGS_VERSION = '2026.10.25-1103';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -4970,9 +4970,13 @@ let _lastAutosavedSnapshot=null;   /* AUTOSAVE_CLAIM — see autosaveOpenNote();
    the update?" without navigating into Settings first. That is not the first
    screen, which is what the standard asks for. */
 function versionStamp(){
-  /* The parenthetical SHA names the commit before this build, not this one —
-     a commit cannot embed its own final hash. See egs-deploy.sh. */
-  return '<div class="ver-stamp" title="Commit shown is the one before this build, not this one — a build cannot embed its own final hash.">'+esc(window.EGS_VERSION||'dev build')+'</div>';
+  /* The stamp is the deploy's date and time and nothing else, and egs-deploy.sh
+     tags the commit it ships with that same name, so `git show <stamp>` is
+     exactly the code running here. Until 2026-10-18 the stamp also carried a
+     commit hash in brackets, which named the commit BEFORE the build, since a
+     commit can't hold its own hash; the tag replaced it. Decided 2026-10-18,
+     docs/EGS-DECISIONS.md (th_egs_deploy_stamp). */
+  return '<div class="ver-stamp" title="The version you\'re running. I keep the exact code for every version, filed under this name.">'+esc(window.EGS_VERSION||'dev build')+'</div>';
 }
 
 function render(){
