@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- EGS-STD:coldopen-version -->
 <!-- sw-update-poll interval set to its real 20 min value, device-confirmed at 5 -->
-<script>window.EGS_VERSION = '2026.10.15-1601 (b4175c0)';</script>
+<script>window.EGS_VERSION = '2026.10.25-0947';</script>
 <title>Notebuilt</title>
 <!-- EGS-STD:themes — §2 row 13. This script runs BEFORE the stylesheet on
      purpose: it stamps the chosen mode on <html> so the very first paint is
@@ -771,6 +771,46 @@
   /* ---- Crop editor ---- */
   #crop-stage{cursor:grab}
   #crop-stage:active{cursor:grabbing}
+  /* ---- NB_TOUR — the landing's projects row, the welcome card, and the
+     shared walkthrough engine's colours ----
+     The engine (EGSTour) carries its own stylesheet and asks only for its
+     colours. Each is mapped here to a ROLE token, never a hex, so both
+     themes are right by construction and audit_contrast.py's matrix already
+     covers every pairing: --paper and --paper-dim on --ink-3 for the card,
+     --brass for accent text, --on-brass on --brass-fill for the button, and
+     --line-strong for the empty checkbox, an outline that IS the control. */
+  :root{
+    --egs-tour-card:var(--ink-3); --egs-tour-text:var(--paper); --egs-tour-muted:var(--paper-dim);
+    --egs-tour-accent:var(--brass-fill); --egs-tour-accent-text:var(--brass); --egs-tour-on-accent:var(--on-brass);
+    --egs-tour-scrim:var(--scrim); --egs-tour-line:var(--line-soft); --egs-tour-strong:var(--line-strong);
+    --egs-tour-ring:var(--brass-fill); --egs-tour-shadow:var(--shadow-pop); --egs-tour-radius:var(--radius);
+    --egs-tour-font:var(--sans); --egs-tour-title-font:var(--serif); --egs-tour-mono:var(--mono);
+  }
+  /* One row that scrolls sideways inside itself, edge to edge of the screen;
+     the page never scrolls sideways (the 320px rule). */
+  .nb-jobs{display:flex;gap:8px;overflow-x:auto;margin:0 -16px 4px;padding:0 16px 6px;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .nb-jobs::-webkit-scrollbar{display:none}
+  .nb-job{flex:none;display:inline-flex;align-items:center;gap:8px;max-width:230px;min-height:44px;
+    padding:0 14px;border-radius:999px;background:var(--ink-3);border:1px solid var(--line-soft);
+    color:var(--paper);font-size:14.5px}
+  .nb-job:active{border-color:var(--brass)}
+  .nb-job svg{width:15px;height:15px;flex:none;color:var(--brass)}
+  .nb-job-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nb-job-n{flex:none;font-family:var(--mono);font-size:11px;line-height:1.35;padding:1px 7px;border-radius:999px;
+    background:var(--brass-fill);color:var(--on-brass)}
+  .sec-head .nb-new{padding:2px 12px;gap:6px}
+  .sec-head .nb-new svg{width:15px;height:15px}
+  /* The install and backup banners sit over the bottom nav, which is exactly
+     where two walkthrough steps point. They stand aside while one runs and
+     come straight back after (egs-tour-on is the engine's flag on <html>). */
+  .egs-tour-on #install-banner,.egs-tour-on #backup-banner{display:none}
+  .nb-hero{text-align:center;padding:22px 18px 18px;margin-top:12px}
+  .nb-hero-mark{display:grid;place-items:center;margin-bottom:10px}
+  .nb-hero-mark svg{width:58px;height:58px}
+  .nb-hero-title{font-family:var(--serif);font-size:23px;font-weight:600;line-height:1.25}
+  .nb-hero-lead{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--brass);margin-top:3px}
+  .nb-hero-body{color:var(--paper-dim);font-size:14px;line-height:1.6;margin:12px 0 16px}
 </style>
 </head>
 <body>
@@ -1585,6 +1625,614 @@
 /* EGS-SHARED:crew-task END */
 </script>
 <script>
+/* EGS-SHARED:guided-tour BEGIN */
+// ============================================================================
+//  EGS platform — guided tour (shared component)
+//  Copyright (c) 2026 Enlightened Global Solutions. All rights reserved.
+//
+//  ONE engine for every EGS app's first-run walkthrough, its "what's new"
+//  pointers and its getting-started checklist. Each app carries a
+//  BYTE-IDENTICAL copy of this block, between the BEGIN/END marker lines,
+//  inside its index.html, and supplies only its own steps and its own words.
+//  Edit it here, in platform/guided_tour.js, never in an app — PaidUp's
+//  independently rewritten sw_logic is what a drifted copy turns into.
+//
+//  Three surfaces, one look:
+//    EGSTour.run(steps, opts)       A walkthrough. Dims the page, cuts a hole
+//                                   round the step's target so that one thing
+//                                   can be tapped, and moves on when Next is
+//                                   tapped or when the thing the step asked
+//                                   for has happened (step.waitFor).
+//    EGSTour.point(target, opts)    One pointer, NOT modal: a ring round the
+//                                   target and a small card beside it. The
+//                                   page stays fully usable underneath.
+//    EGSTour.pointSeries(list, o)   Several pointers, one after another, for
+//                                   "what's new" after an update.
+//    EGSTour.checklistHtml(m, esc)  The markup for a getting-started card. The
+//                                   app draws it inside its own render, with
+//                                   its own esc(), and wires the taps itself.
+//
+//  What it never does:
+//    * store anything. The app is told what happened (onEnd, onSeen, onDone)
+//      and decides what to write and when — startup must never write.
+//    * navigate. A step's prepare() is the app's code, not the engine's.
+//    * hold an element. Every EGS app rebuilds its screens by string
+//      concatenation, so a node kept past one frame may already be gone
+//      (EGS-DECISIONS 2026-08-12, node identity). Targets are selectors or
+//      functions, resolved again every time the layer is drawn.
+//    * parse step text as markup. The tour and pointer layers are built with
+//      createElement and textContent. checklistHtml is the one string
+//      builder, and every piece of text in it goes through the caller's esc().
+//
+//  Layering: opts.zIndex (default 55) sits above page chrome (bottom nav,
+//  add button, banners) and below every sheet, viewer and lock screen.
+//  opts.isBusy() hides the layer outright while any of those is open, so a
+//  tour never sits on top of a screen it knows nothing about. While a
+//  walkthrough runs, <html> carries the class egs-tour-on, so an app can
+//  stand its own fixed bars aside. A target is only ever pointed at when a
+//  finger could land on it: hit-tested, not just measured.
+//
+//  Theming: every colour is a custom property with a dark default. An app
+//  maps its own role tokens onto --egs-tour-* in its stylesheet (card, text,
+//  muted, accent, accent-text, on-accent, scrim, line, strong, ring).
+// ============================================================================
+(function(global){
+  'use strict';
+
+  var VERSION = 1;
+  var doc = global.document;
+
+  var CSS = [
+    '.egs-tour,.egs-point,.egs-check{',
+    '  --t-card:var(--egs-tour-card,#252A33);--t-text:var(--egs-tour-text,#ECE6D8);',
+    '  --t-muted:var(--egs-tour-muted,#A7A294);--t-accent:var(--egs-tour-accent,#D7A94B);',
+    '  --t-accent-text:var(--egs-tour-accent-text,#D7A94B);--t-on-accent:var(--egs-tour-on-accent,#231A07);',
+    '  --t-scrim:var(--egs-tour-scrim,rgba(0,0,0,.6));--t-line:var(--egs-tour-line,#333A45);',
+    '  --t-strong:var(--egs-tour-strong,#67758B);--t-ring:var(--egs-tour-ring,#D7A94B);',
+    '  --t-shadow:var(--egs-tour-shadow,0 10px 30px rgba(0,0,0,.45));--t-radius:var(--egs-tour-radius,14px);',
+    '  --t-font:var(--egs-tour-font,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif);',
+    '  --t-title:var(--egs-tour-title-font,var(--t-font));--t-mono:var(--egs-tour-mono,ui-monospace,Menlo,Consolas,monospace)}',
+    '.egs-tour,.egs-point{position:fixed;inset:0;pointer-events:none}',
+    '.egs-tour-block{position:fixed;background:var(--t-scrim);pointer-events:auto;touch-action:none}',
+    '.egs-tour-ring{position:fixed;border:2px solid var(--t-ring);border-radius:12px;pointer-events:none;box-sizing:border-box}',
+    '.egs-tour-ring::after{content:"";position:absolute;inset:-6px;border-radius:16px;border:2px solid var(--t-ring);',
+    '  opacity:.6;animation:egs-tour-pulse 1.6s ease-out infinite}',
+    '@keyframes egs-tour-pulse{from{transform:scale(1);opacity:.6}to{transform:scale(1.06);opacity:0}}',
+    '.egs-tour-card{position:fixed;left:12px;right:12px;margin:0 auto;max-width:440px;box-sizing:border-box;',
+    '  background:var(--t-card);color:var(--t-text);border:1px solid var(--t-line);border-radius:var(--t-radius);',
+    '  box-shadow:var(--t-shadow);padding:16px 16px 12px;pointer-events:auto;font-family:var(--t-font);',
+    '  font-size:15px;line-height:1.5;max-height:calc(100% - 24px);overflow:auto;text-align:left}',
+    '.egs-tour-card.egs-nudge{animation:egs-tour-nudge .3s}',
+    '@keyframes egs-tour-nudge{0%,100%{transform:none}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}',
+    '.egs-tour-eyebrow{font-family:var(--t-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;',
+    '  color:var(--t-accent-text);margin:0 40px 6px 0}',
+    '.egs-tour-title{font-family:var(--t-title);font-size:20px;font-weight:600;line-height:1.25;margin:0 40px 4px 0}',
+    '.egs-tour-lead{font-family:var(--t-title);font-style:italic;font-size:16px;color:var(--t-accent-text);margin:0 0 6px}',
+    '.egs-tour-body{color:var(--t-muted);font-size:14.5px;line-height:1.6}',
+    '.egs-tour-body p{margin:6px 0 0}',
+    '.egs-tour-wait{font-family:var(--t-mono);font-size:12px;letter-spacing:.04em;color:var(--t-accent-text);margin-top:10px}',
+    '.egs-tour-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:12px}',
+    '.egs-tour-btn{min-height:44px;padding:0 18px;border-radius:12px;border:1px solid var(--t-line);background:none;',
+    '  color:var(--t-text);font:600 15px var(--t-font);cursor:pointer}',
+    '.egs-tour-btn.primary{background:var(--t-accent);border-color:var(--t-accent);color:var(--t-on-accent);margin-left:auto}',
+    '.egs-tour-link{min-height:44px;padding:0 4px;border:0;background:none;color:var(--t-muted);font:inherit;',
+    '  font-size:13.5px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}',
+    '.egs-tour-x{position:absolute;top:6px;right:6px;width:40px;height:40px;border:0;border-radius:10px;background:none;',
+    '  color:var(--t-muted);font:400 24px/1 var(--t-font);cursor:pointer}',
+    '.egs-tour-btn:focus-visible,.egs-tour-link:focus-visible,.egs-tour-x:focus-visible,',
+    '.egs-check-item:focus-visible,.egs-check-hide:focus-visible{outline:2px solid var(--t-accent);outline-offset:2px}',
+    '.egs-tour-btn[disabled],.egs-tour-link[disabled]{opacity:.45;pointer-events:none}',
+    '.egs-tour-card:focus{outline:none}',
+    '.egs-check{background:var(--t-card);color:var(--t-text);border:1px solid var(--t-line);border-radius:var(--t-radius);',
+    '  padding:14px 14px 6px;margin:12px 0 4px;font-family:var(--t-font)}',
+    '.egs-check-head{display:flex;align-items:center;gap:10px}',
+    '.egs-check-title{flex:1;min-width:0;font-family:var(--t-title);font-size:17px;font-weight:600}',
+    '.egs-check-count{font-family:var(--t-mono);font-size:11px;letter-spacing:.08em;color:var(--t-muted);white-space:nowrap}',
+    '.egs-check-hide{min-height:36px;padding:0 12px;border:1px solid var(--t-line);border-radius:9px;background:none;',
+    '  color:var(--t-muted);font:inherit;font-size:13px;cursor:pointer}',
+    '.egs-check-bar{height:4px;border-radius:2px;background:var(--t-line);margin:10px 0 4px;overflow:hidden}',
+    '.egs-check-bar span{display:block;height:100%;background:var(--t-accent)}',
+    '.egs-check-list{list-style:none;margin:0;padding:0}',
+    '.egs-check-item{display:flex;align-items:center;gap:12px;width:100%;min-height:46px;padding:6px 2px;margin:0;',
+    '  border:0;border-top:1px solid var(--t-line);background:none;color:var(--t-text);font:inherit;font-size:15px;',
+    '  text-align:left;cursor:pointer}',
+    '.egs-check-list li:first-child .egs-check-item{border-top:0}',
+    '.egs-check-box{flex:none;width:24px;height:24px;box-sizing:border-box;border-radius:7px;border:1.5px solid var(--t-strong);',
+    '  display:grid;place-items:center;color:var(--t-on-accent);font-size:14px;font-weight:700;line-height:1}',
+    '.egs-check-item.is-done .egs-check-box{background:var(--t-accent);border-color:var(--t-accent)}',
+    '.egs-check-item.is-done .egs-check-label{color:var(--t-muted);text-decoration:line-through}',
+    '.egs-check-label{flex:1;min-width:0}',
+    '.egs-check-opt{font-family:var(--t-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;',
+    '  color:var(--t-muted);margin-left:8px;text-decoration:none;display:inline-block}',
+    '.egs-check-go{flex:none;color:var(--t-muted);font-size:22px;line-height:1}',
+    '.egs-check-done{color:var(--t-muted);font-size:14px;line-height:1.55;margin:8px 0 10px}',
+    '@media (prefers-reduced-motion:reduce){.egs-tour-ring::after{animation:none;opacity:.45}.egs-tour-card.egs-nudge{animation:none}}'
+  ].join('\n');
+
+  function css(){
+    if(!doc || !doc.documentElement || doc.getElementById('egs-tour-css')) return;
+    var s = doc.createElement('style');
+    s.id = 'egs-tour-css';
+    s.textContent = CSS;
+    (doc.head || doc.documentElement).appendChild(s);
+  }
+  // At load, not on first use: a checklist card drawn on a later launch, with
+  // no walkthrough or pointer run first, still needs its stylesheet.
+  css();
+  function mk(tag, cls, text){
+    var e = doc.createElement(tag);
+    if(cls) e.className = cls;
+    if(text != null) e.textContent = String(text);
+    return e;
+  }
+  function btn(cls, text, onTap, label){
+    var b = mk('button', cls, text);
+    b.type = 'button';
+    if(label) b.setAttribute('aria-label', label);
+    b.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); onTap(ev); });
+    return b;
+  }
+  // Paragraphs split on a blank line, each one plain text.
+  function paras(cls, text){
+    var d = mk('div', cls);
+    String(text).split(/\n\n+/).forEach(function(p){ d.appendChild(mk('p', null, p)); });
+    return d;
+  }
+
+  // A target is a selector or a function. Resolved fresh every time, and only
+  // counted when it is in the page and has a size.
+  function resolve(t){
+    if(!t || !doc) return null;
+    var e = null;
+    try{ e = (typeof t === 'function') ? t() : doc.querySelector(String(t)); }catch(err){ e = null; }
+    if(!e || !e.getBoundingClientRect || e.isConnected === false) return null;
+    var r = e.getBoundingClientRect();
+    if(r.width < 1 || r.height < 1) return null;
+    return e;
+  }
+
+  // Style writes only when the value changes: keeps the observer quiet, and
+  // never touches a node for nothing.
+  function put(e, k, v){ if(e.style[k] !== v) e.style[k] = v; }
+  function box(e, x, y, w, h){
+    put(e, 'left', Math.round(x) + 'px'); put(e, 'top', Math.round(y) + 'px');
+    put(e, 'width', Math.max(0, Math.round(w)) + 'px'); put(e, 'height', Math.max(0, Math.round(h)) + 'px');
+  }
+  function show(e, on){ put(e, 'display', on ? '' : 'none'); }
+
+  // The phone's notch and gesture bar, read once per layer through a probe —
+  // env() has no JavaScript reader of its own.
+  function insets(){
+    var p = mk('div');
+    p.style.cssText = 'position:fixed;left:0;top:0;width:0;visibility:hidden;pointer-events:none;'
+      + 'padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)';
+    doc.body.appendChild(p);
+    var cs = global.getComputedStyle(p);
+    var r = { t: parseFloat(cs.paddingTop) || 0, b: parseFloat(cs.paddingBottom) || 0 };
+    p.parentNode.removeChild(p);
+    return r;
+  }
+  function viewport(){
+    return { w: doc.documentElement.clientWidth || global.innerWidth, h: global.innerHeight };
+  }
+
+  // Where a card goes beside a hole: whichever side has room, never over it.
+  function cardTop(hole, ch, vh, ins){
+    var gap = 12, top = 12 + ins.t, bottom = 12 + ins.b;
+    var below = vh - bottom - hole.b, above = hole.t - top;
+    if(below >= ch + gap) return hole.b + gap;
+    if(above >= ch + gap) return hole.t - gap - ch;
+    return below >= above ? Math.max(top, vh - bottom - ch) : top;
+  }
+
+  // ---- one scheduler for both layers ----------------------------------------
+  // A burst of DOM changes becomes one draw per frame. A slow tick catches
+  // what no event announces, and is what polls a step's waitFor().
+  var layer = null, pointer = null;
+  var rafId = 0, tickId = 0, mo = null;
+
+  function drawAll(){ if(layer) layer.draw(); if(pointer) pointer.draw(); }
+  function schedule(){
+    if(rafId) return;
+    var raf = global.requestAnimationFrame || function(f){ return setTimeout(f, 16); };
+    rafId = raf(function(){ rafId = 0; drawAll(); });
+  }
+  function ours(n){ return (layer && layer.root.contains(n)) || (pointer && pointer.root.contains(n)); }
+  function watch(){
+    if(!tickId) tickId = setInterval(function(){ if(layer) layer.tick(); if(pointer) pointer.tick(); schedule(); }, 350);
+    if(mo || !global.MutationObserver) return;
+    mo = new global.MutationObserver(function(recs){
+      for(var k = 0; k < recs.length; k++){ if(!ours(recs[k].target)){ schedule(); return; } }
+    });
+    mo.observe(doc.body, { childList:true, subtree:true, attributes:true, attributeFilter:['class', 'hidden', 'style'] });
+    global.addEventListener('resize', schedule);
+    global.addEventListener('scroll', schedule, true);
+  }
+  function unwatchIfIdle(){
+    if(layer || pointer) return;
+    if(mo){ mo.disconnect(); mo = null; }
+    global.removeEventListener('resize', schedule);
+    global.removeEventListener('scroll', schedule, true);
+    if(tickId){ clearInterval(tickId); tickId = 0; }
+  }
+  function busy(o){ try{ return !!(o.isBusy && o.isBusy()); }catch(e){ return false; } }
+
+  // Could a finger land on it right now? On screen is not enough: a button
+  // under a fixed bar or a banner is on screen and still cannot be tapped. So
+  // hit-test its centre (its top, if it is tall), looking past our own layers.
+  function hittable(t, r){
+    var vp = viewport();
+    var x = r.left + r.width / 2, y = r.top + Math.min(r.height / 2, 22);
+    if(x < 0 || y < 0 || x > vp.w || y > vp.h) return false;
+    if(!doc.elementsFromPoint) return true;
+    var hit = doc.elementsFromPoint(x, y);
+    for(var k = 0; k < hit.length; k++){
+      if(ours(hit[k])) continue;
+      return hit[k] === t || t.contains(hit[k]) || hit[k].contains(t);
+    }
+    return false;
+  }
+
+  // ---- the walkthrough --------------------------------------------------------
+  //  step: { id, eyebrow?, title, lead?, body?,
+  //          target?    selector or function; none = a card on its own, page dimmed
+  //          pad?       space round the hole (6), maxHole? tallest hole as a share of the screen (0.6)
+  //          primary?   button label. Absent = an action step: it waits for waitFor()
+  //          onPrimary? fn(ctl) runs instead of moving on; the step moves itself on
+  //          secondary? {label, onTap(ctl)} a quiet link beside the button
+  //          waitFor?   fn → true once the thing asked for has happened
+  //          prepare?   fn(ctl) on entering the step, and behind "Show me"
+  //          skipIf?    fn → true to pass over the step entirely
+  //          uncounted? not numbered in "Step n of m" (a welcome card) }
+  //  opts:  { zIndex, isBusy, onEnd(reason, index, stepId), onStep(index, step),
+  //           labels:{ next, skipStep, showMe, close, stepOf:'Step {n} of {m}' } }
+  //  onEnd reasons: 'done' (ran off the end), 'skipped' (a person ended it),
+  //  'replaced' (another run started), 'stopped' (EGSTour.stop() or ctl.end('stopped')).
+  //  ctl: next(), go(i), end(reason), index(), alive(), wait(text|null), refresh().
+  //  alive() is for a step's own async work: finished after the walkthrough
+  //  was closed, it must leave the screen alone.
+  function run(steps, o){
+    if(!doc || !doc.body) return null;
+    css();
+    if(layer) layer.end('replaced');
+    if(pointer) pointer.close('replaced');
+    o = o || {};
+    var L = o.labels || {};
+    function lab(k, d){ return L[k] != null ? String(L[k]) : d; }
+    var counted = steps.filter(function(s){ return !s.uncounted; });
+
+    var root = mk('div', 'egs-tour');
+    root.style.zIndex = String(o.zIndex || 55);
+    var blocks = [0, 1, 2, 3].map(function(){
+      var b = mk('div', 'egs-tour-block');
+      b.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); nudge(); });
+      root.appendChild(b);
+      return b;
+    });
+    var ring = mk('div', 'egs-tour-ring');
+    var card = mk('div', 'egs-tour-card');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-live', 'polite');
+    card.tabIndex = -1;
+    root.appendChild(ring);
+    root.appendChild(card);
+    doc.body.appendChild(root);
+    var ins = insets();
+
+    var i = -1, enteredAt = 0, moving = false, scrolledFor = -1, waitText = null, ended = false, showMeBtn = null;
+
+    function nudge(){ card.classList.remove('egs-nudge'); void card.offsetWidth; card.classList.add('egs-nudge'); }
+
+    function paint(){
+      var s = steps[i];
+      card.textContent = '';
+      showMeBtn = null;
+      card.setAttribute('aria-label', s.title || '');
+      card.appendChild(btn('egs-tour-x', '×', function(){ finish('skipped'); }, lab('close', 'End the walkthrough')));
+      var n = counted.indexOf(s);
+      var eyebrow = s.eyebrow || (n >= 0 ? lab('stepOf', 'Step {n} of {m}').replace('{n}', n + 1).replace('{m}', counted.length) : '');
+      if(eyebrow) card.appendChild(mk('div', 'egs-tour-eyebrow', eyebrow));
+      card.appendChild(mk('div', 'egs-tour-title', s.title || ''));
+      if(s.lead) card.appendChild(mk('div', 'egs-tour-lead', s.lead));
+      if(s.body) card.appendChild(paras('egs-tour-body', s.body));
+      if(waitText) card.appendChild(mk('div', 'egs-tour-wait', waitText));
+      var acts = mk('div', 'egs-tour-actions');
+      if(s.secondary) acts.appendChild(btn('egs-tour-link', s.secondary.label, function(){ if(!waitText) s.secondary.onTap(ctl); }));
+      else if(!s.primary) acts.appendChild(btn('egs-tour-link', lab('skipStep', 'Skip this step'), function(){ if(!waitText) next(); }));
+      if(s.prepare){
+        showMeBtn = btn('egs-tour-btn', lab('showMe', 'Show me'), function(){ try{ s.prepare(ctl); }catch(e){} schedule(); });
+        show(showMeBtn, false);
+        acts.appendChild(showMeBtn);
+      }
+      if(s.primary){
+        acts.appendChild(btn('egs-tour-btn primary', s.primary, function(){
+          if(waitText) return;
+          if(s.onPrimary) s.onPrimary(ctl); else next();
+        }));
+      }
+      if(waitText) Array.prototype.forEach.call(acts.querySelectorAll('button'), function(b){ b.disabled = true; });
+      card.appendChild(acts);
+    }
+
+    function go(k){
+      if(ended) return;
+      while(k < steps.length && steps[k].skipIf && (function(){ try{ return steps[k].skipIf(); }catch(e){ return false; } })()) k++;
+      if(k >= steps.length){ finish('done'); return; }
+      i = k; enteredAt = Date.now(); moving = false; scrolledFor = -1; waitText = null;
+      var s = steps[i];
+      if(s.prepare){ try{ s.prepare(ctl); }catch(e){} }
+      paint();
+      if(o.onStep){ try{ o.onStep(i, s); }catch(e){} }
+      schedule();
+      // The card takes focus, so a screen reader reads the step — the card
+      // and not a button, so a phone shows no focus ring on anything.
+      setTimeout(function(){
+        if(ended || i !== k || busy(o)) return;
+        try{ card.focus({ preventScroll:true }); }catch(e){}
+      }, 30);
+    }
+    function next(){ go(i + 1); }
+
+    function finish(reason){
+      if(ended) return;
+      ended = true;
+      if(root.parentNode) root.parentNode.removeChild(root);
+      if(layer && layer.root === root){ layer = null; doc.documentElement.classList.remove('egs-tour-on'); }
+      doc.removeEventListener('keydown', onKey, true);
+      unwatchIfIdle();
+      if(o.onEnd){ try{ o.onEnd(reason, i, steps[i] && steps[i].id); }catch(e){} }
+    }
+    function onKey(e){ if(e.key === 'Escape' && !busy(o)) finish('skipped'); }
+
+    function tick(){
+      if(ended || moving) return;
+      var s = steps[i];
+      if(!s || !s.waitFor || waitText || Date.now() - enteredAt < 250) return;
+      var hit = false;
+      try{ hit = !!s.waitFor(ctl); }catch(e){}
+      if(!hit) return;
+      moving = true;
+      setTimeout(function(){ if(!ended && steps[i] === s) next(); }, 350);
+    }
+
+    // Wholly on screen (a tall one: its top in the upper part) and not under
+    // anything — the test for whether to scroll it into view first.
+    function reachable(t, r, vw, vh, tall){
+      if(r.left < 0 || r.right > vw) return false;
+      if(tall ? (r.top < ins.t || r.top > vh * 0.4) : (r.top < ins.t || r.bottom > vh - ins.b)) return false;
+      return hittable(t, r);
+    }
+
+    function draw(){
+      if(ended) return;
+      var b = busy(o);
+      show(root, !b);
+      if(b) return;
+      var s = steps[i];
+      if(!s) return;
+      var vp = viewport(), vw = vp.w, vh = vp.h;
+      var t = s.target ? resolve(s.target) : null;
+      var ch = card.offsetHeight;
+      if(showMeBtn) show(showMeBtn, false);
+      if(!s.target){
+        // A card on its own: the page is dimmed and nothing under it can be tapped.
+        box(blocks[0], 0, 0, vw, vh); show(blocks[0], true);
+        for(var k = 1; k < 4; k++) show(blocks[k], false);
+        show(ring, false);
+        put(card, 'bottom', 'auto');
+        put(card, 'top', Math.max(12 + ins.t, Math.round((vh - ch) / 2)) + 'px');
+        return;
+      }
+      if(t){
+        var r = t.getBoundingClientRect();
+        var tall = r.height > vh * 0.6;
+        if(scrolledFor !== i && !reachable(t, r, vw, vh, tall)){
+          // Once per step: after that the person may scroll wherever they like.
+          scrolledFor = i;
+          try{ t.scrollIntoView({ block: tall ? 'start' : 'center', inline:'nearest' }); }catch(e){}
+          schedule();
+          return;
+        }
+        var pad = s.pad != null ? s.pad : 6;
+        var h = { l: Math.max(2, r.left - pad), t: Math.max(2, r.top - pad),
+                  r: Math.min(vw - 2, r.right + pad), b: Math.min(vh - 2, r.bottom + pad) };
+        var maxH = Math.round(vh * (s.maxHole || 0.6));
+        if(h.b - h.t > maxH) h.b = h.t + maxH;
+        if(h.b - h.t >= 8 && h.r - h.l >= 8){
+          box(blocks[0], 0, 0, vw, h.t);
+          box(blocks[1], 0, h.b, vw, vh - h.b);
+          box(blocks[2], 0, h.t, h.l, h.b - h.t);
+          box(blocks[3], h.r, h.t, vw - h.r, h.b - h.t);
+          blocks.forEach(function(x){ show(x, true); });
+          box(ring, h.l, h.t, h.r - h.l, h.b - h.t);
+          show(ring, true);
+          put(card, 'bottom', 'auto');
+          put(card, 'top', Math.round(cardTop(h, ch, vh, ins)) + 'px');
+          return;
+        }
+      }
+      // What it points at is not on this screen. Nothing is dimmed, so the
+      // person is never stuck; the card waits at the bottom, with Show me.
+      blocks.forEach(function(x){ show(x, false); });
+      show(ring, false);
+      if(showMeBtn) show(showMeBtn, true);
+      put(card, 'top', 'auto');
+      put(card, 'bottom', Math.round(12 + ins.b) + 'px');
+    }
+
+    var ctl = {
+      next: next,
+      go: function(k){ go(k); },
+      end: function(reason){ finish(reason || 'skipped'); },
+      index: function(){ return i; },
+      alive: function(){ return !ended; },
+      wait: function(text){ waitText = text || null; if(!ended){ paint(); schedule(); } },
+      refresh: schedule
+    };
+    layer = { root: root, draw: draw, tick: tick, end: finish };
+    // While a walkthrough runs, <html> carries egs-tour-on, so an app can stand
+    // its own fixed bars aside (an install or backup banner over the bottom nav
+    // would sit right where a step points). Removed the moment it ends.
+    doc.documentElement.classList.add('egs-tour-on');
+    watch();
+    doc.addEventListener('keydown', onKey, true);
+    go(o.startAt || 0);
+    return ctl;
+  }
+
+  // ---- one pointer ------------------------------------------------------------
+  //  opts: { title, body?, button ('Got it'), eyebrow?, zIndex (54), isBusy,
+  //          dismissOnTargetTap, until?() → true to close, onDone(how) }
+  //  how: 'ok' (the button), 'target' (they tapped the thing), 'until',
+  //  'closed' (by code), 'replaced' (another pointer or a walkthrough).
+  function point(target, o){
+    if(!doc || !doc.body) return null;
+    css();
+    if(pointer) pointer.close('replaced');
+    o = o || {};
+    var root = mk('div', 'egs-point');
+    root.style.zIndex = String(o.zIndex || 54);
+    var ring = mk('div', 'egs-tour-ring');
+    var card = mk('div', 'egs-tour-card');
+    card.setAttribute('role', 'status');
+    card.setAttribute('aria-live', 'polite');
+    if(o.eyebrow) card.appendChild(mk('div', 'egs-tour-eyebrow', o.eyebrow));
+    card.appendChild(mk('div', 'egs-tour-title', o.title || ''));
+    if(o.body) card.appendChild(paras('egs-tour-body', o.body));
+    var acts = mk('div', 'egs-tour-actions');
+    acts.appendChild(btn('egs-tour-btn primary', o.button || 'Got it', function(){ done('ok'); }));
+    card.appendChild(acts);
+    root.appendChild(ring);
+    root.appendChild(card);
+    show(root, false);
+    doc.body.appendChild(root);
+    var ins = insets(), closed = false;
+
+    function done(how){
+      if(closed) return;
+      closed = true;
+      if(root.parentNode) root.parentNode.removeChild(root);
+      if(pointer && pointer.root === root) pointer = null;
+      doc.removeEventListener('click', onTap, true);
+      unwatchIfIdle();
+      if(o.onDone){ try{ o.onDone(how); }catch(e){} }
+    }
+    function onTap(ev){
+      if(!o.dismissOnTargetTap) return;
+      var t = resolve(target);
+      if(t && ev.target && t.contains(ev.target)) done('target');
+    }
+    function draw(){
+      if(closed) return;
+      var t = busy(o) ? null : resolve(target);
+      if(!t){ show(root, false); return; }
+      var vp = viewport(), r = t.getBoundingClientRect();
+      // Pointing at something nobody can tap — off screen, or under a banner —
+      // only confuses. Wait out of sight until it can be.
+      if(!hittable(t, r)){ show(root, false); return; }
+      show(root, true);
+      var h = { l: Math.max(2, r.left - 5), t: Math.max(2, r.top - 5),
+                r: Math.min(vp.w - 2, r.right + 5), b: Math.min(vp.h - 2, r.bottom + 5) };
+      box(ring, h.l, h.t, h.r - h.l, h.b - h.t);
+      put(card, 'top', Math.round(cardTop(h, card.offsetHeight, vp.h, ins)) + 'px');
+    }
+    function tick(){ if(!closed && o.until){ var u = false; try{ u = !!o.until(); }catch(e){} if(u) done('until'); } }
+
+    pointer = { root: root, draw: draw, tick: tick, close: done };
+    doc.addEventListener('click', onTap, true);
+    watch();
+    schedule();
+    return { close: function(){ done('closed'); } };
+  }
+
+  // Several pointers in turn. onSeen(id) as each is dismissed by a person —
+  // never for one that was closed by code or replaced, which stays unseen.
+  //  list: [{ id, target, title, body }]
+  //  opts: { zIndex, isBusy, eyebrow, counter:'{n} of {m}', next:'Next', done:'Got it', onSeen(id), onEnd() }
+  function pointSeries(list, o){
+    o = o || {};
+    var k = 0;
+    function one(){
+      if(k >= list.length){ if(o.onEnd){ try{ o.onEnd(); }catch(e){} } return; }
+      var x = list[k];
+      var many = list.length > 1;
+      point(x.target, {
+        title: x.title, body: x.body, zIndex: o.zIndex, isBusy: o.isBusy,
+        eyebrow: many ? String(o.counter || '{n} of {m}').replace('{n}', k + 1).replace('{m}', list.length) : (o.eyebrow || null),
+        button: (many && k < list.length - 1) ? (o.next || 'Next') : (o.done || 'Got it'),
+        onDone: function(how){
+          if(how !== 'ok' && how !== 'target') return;
+          if(o.onSeen){ try{ o.onSeen(x.id); }catch(e){} }
+          k++;
+          one();
+        }
+      });
+    }
+    one();
+  }
+
+  // The entries whose id is not in seen. Pure; safe to call anywhere.
+  function unseen(entries, seen){
+    var s = {};
+    (Array.isArray(seen) ? seen : []).forEach(function(id){ s[id] = 1; });
+    return (Array.isArray(entries) ? entries : []).filter(function(x){ return x && x.id && !s[x.id]; });
+  }
+
+  // ---- the getting-started card -----------------------------------------------
+  //  m: { title, items:[{id, label, done, optional}], countLabel:'{d} of {n}',
+  //       hideLabel, optionalLabel, doneTitle, doneBody }
+  //  Taps: [data-egs-check="<id>"] on each item, [data-egs-check-hide] on Hide.
+  //  Optional items are listed but never counted, so "all done" means every
+  //  item that is not optional.
+  function checklistHtml(m, esc){
+    var e = esc || function(s){
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+        return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+      });
+    };
+    var items = Array.isArray(m.items) ? m.items : [];
+    var need = items.filter(function(x){ return !x.optional; });
+    var got = need.filter(function(x){ return x.done; }).length;
+    var all = need.length > 0 && got === need.length;
+    var pct = need.length ? Math.round(got * 100 / need.length) : 0;
+    var count = String(m.countLabel || '{d} of {n}').replace('{d}', got).replace('{n}', need.length);
+    var h = '<div class="egs-check" data-egs-check-card>'
+      + '<div class="egs-check-head"><div class="egs-check-title">' + e(all && m.doneTitle ? m.doneTitle : m.title) + '</div>'
+      + '<div class="egs-check-count">' + e(count) + '</div>'
+      + '<button type="button" class="egs-check-hide" data-egs-check-hide>' + e(m.hideLabel || 'Hide') + '</button></div>'
+      + '<div class="egs-check-bar" role="progressbar" aria-valuemin="0" aria-valuemax="' + need.length
+      + '" aria-valuenow="' + got + '"><span style="width:' + pct + '%"></span></div>';
+    if(all && m.doneBody){
+      h += '<div class="egs-check-done">' + e(m.doneBody) + '</div>';
+    } else {
+      h += '<ul class="egs-check-list">';
+      items.forEach(function(x){
+        h += '<li><button type="button" class="egs-check-item' + (x.done ? ' is-done' : '') + '" data-egs-check="' + e(x.id) + '">'
+          + '<span class="egs-check-box" aria-hidden="true">' + (x.done ? '✓' : '') + '</span>'
+          + '<span class="egs-check-label">' + e(x.label)
+          + (x.optional ? '<span class="egs-check-opt">' + e(m.optionalLabel || 'optional') + '</span>' : '') + '</span>'
+          + '<span class="egs-check-go" aria-hidden="true">' + (x.done ? '' : '›') + '</span></button></li>';
+      });
+      h += '</ul>';
+    }
+    return h + '</div>';
+  }
+
+  var api = {
+    VERSION: VERSION, CSS: CSS,
+    run: run, point: point, pointSeries: pointSeries, unseen: unseen, checklistHtml: checklistHtml,
+    active: function(){ return !!layer; },
+    pointing: function(){ return !!pointer; },
+    stop: function(){ if(layer) layer.end('stopped'); if(pointer) pointer.close('closed'); },
+    refresh: schedule
+  };
+  global.EGSTour = api;
+  if(typeof module !== 'undefined' && module.exports) module.exports = api;
+
+})(typeof globalThis !== 'undefined' ? globalThis : typeof self !== 'undefined' ? self : this);
+/* EGS-SHARED:guided-tour END */
+</script>
+<script>
 "use strict";
 /* ============================================================
    Punch List — a privacy-first field notebook PWA
@@ -1957,7 +2605,7 @@ function unlockIsOn(){ return !!(settings.unlock && settings.unlock.activationId
    so their standing survives a restore onto a new phone. */
 function unlockPriorProjects(){
   if(typeof settings.priorProjects==='number') return settings.priorProjects;
-  settings.priorProjects=houses.length; persist.settings();
+  settings.priorProjects=nbCountedProjects(); persist.settings();   /* NB_TOUR — the sample is not one */
   return settings.priorProjects;
 }
 
@@ -1965,7 +2613,8 @@ function unlockPriorProjects(){
    onto houses directly without ever routing through openHouseSheet, so
    they are uncapped by construction rather than by a flag someone has to
    remember. Getting your own data back is not a purchase decision. */
-function unlockCanCreateProject(){ return unlockIsOn() || houses.length < UNLOCK.FREE_PROJECTS; }
+/* NB_TOUR — the sample job is not one of the free three (one sample, at most). */
+function unlockCanCreateProject(){ return unlockIsOn() || nbCountedProjects() < UNLOCK.FREE_PROJECTS; }
 
 function unlockActivatedOn(){
   const t=settings.unlock&&settings.unlock.activatedAt;
@@ -2198,9 +2847,9 @@ function unlockPitch(resume){
   const grand=unlockPriorProjects()>free;
   const head=grand?'Your projects are yours — free, forever':'Unlock unlimited projects';
   const lead=grand
-    ? 'You have <b style="color:var(--paper)">'+houses.length+' projects</b>, from before Notebuilt had a limit. They stay yours forever, free — nothing here locks, hides or expires.<br><br>'
+    ? 'You have <b style="color:var(--paper)">'+nbCountedProjects()+' projects</b>, from before Notebuilt had a limit. They stay yours forever, free — nothing here locks, hides or expires.<br><br>'
       +'Unlocking removes the '+free+'-project cap on new ones.'
-    : 'Notebuilt is free for '+free+' projects'+(houses.length===free?', and you are using all '+free+'.':', and you have '+houses.length+'.')+'<br><br>'
+    : 'Notebuilt is free for '+free+' projects'+(nbCountedProjects()===free?', and you are using all '+free+'.':', and you have '+nbCountedProjects()+'.')+'<br><br>'
       +'Unlocking gives you as many as you like. Everything else — photos, the vault, backups, the calculator — is already yours and always was.';
   sheet('<h2>'+head+'</h2>'
     +'<div class="muted" style="font-size:13.5px;line-height:1.62">'+lead+'<br><br>'
@@ -2388,6 +3037,10 @@ function nbGuideNoticeDue(){
     if(localStorage.getItem(NB_GUIDE_NOTICE_KEY)) return false;
     if(localStorage.getItem(NB_GUIDE_KEY)) return false;   /* already chose, once */
   }catch(e){ return false; }
+  /* NB_TOUR — a phone that began with the walkthrough is a fresh install,
+     whatever the sample job put in it, and the walkthrough's last card has
+     already told them about the i marks. */
+  if(nbTourFirstRunHere()) return false;
   return !!(houses.length||notes.length||tasks.length);     /* an existing install */
 }
 function nbGuideNoticeHtml(){
@@ -2475,7 +3128,8 @@ const HELP_TITLE={
   'import-project':'Import a shared project',
   'share':'Share a project',
   'theme':'Theme',
-  'unlock':'Free, and unlocking'
+  'unlock':'Free, and unlocking',
+  'start':'Getting started'
 };
 const HELP_COPY={
   'guide':'Beginner mode puts a small circled i beside the parts of the app worth a sentence of explanation. Tap one and it tells you what that thing does, in plain words, including what it will not do.\n\nExpert hides every one of them. Nothing else changes, no feature goes away, and you can switch back in here whenever you like.\n\nThis setting stays on this phone. It is not in your backup, so the tablet on the bench and the phone in the truck can each be set to suit whoever picks it up.',
@@ -2514,8 +3168,511 @@ const HELP_COPY={
 
   'theme':'Day is for bright cabs and outdoors, where a dark screen turns into a mirror. Night is the notebook you know. Auto follows whatever your phone is set to, and changes with it. This one is kept per device, not in your backup — the phone in the truck and the tablet on the bench can each be set to suit where they are used.',
 
-  'unlock':'Notebuilt is free for '+UNLOCK.FREE_PROJECTS+' projects with every single feature switched on — photos, the vault, backups, the calculator, all of it. Unlocking takes the limit off how many projects you keep. It is '+UNLOCK.PRICE+', once. No subscription, no account, no trial that runs out.\n\nProjects you already made never lock. Reaching the limit stops you starting another one; it never touches the ones you have.\n\nEntering your key sends it to Polar, who handle the payment, a single time, to register it. After that Notebuilt never contacts anything again — the unlock is not re-checked at launch, or ever. The key is stored in your settings, so your backup carries it to your next phone.\n\nIt is a real app that installs straight from the website — no app store in the middle. You go to notebuilt.ca, tap Install, and it is on your home screen like any other app: its own icon, opens full screen, works with no signal. The only difference is where it came from.\n\nIt is not in an app store today, and a store version is in the works. But here is the honest reason it started this way: direct means no middleman. No store taking a 15-30% cut that I’d have to pass on to you, no account required, no store tracking what you installed. You get it direct from the guy who built it, and updates land the moment I ship them instead of waiting on store review.\n\nSame app either way once it is installed. Your data is identical — everything stays on your phone regardless.\n\nAnd because the check runs on your own phone, in code you can read, it is honesty-based. I know that. Paying is a choice to keep this being built, not a lock I have you behind.'
+  'unlock':'Notebuilt is free for '+UNLOCK.FREE_PROJECTS+' projects with every single feature switched on — photos, the vault, backups, the calculator, all of it. Unlocking takes the limit off how many projects you keep. It is '+UNLOCK.PRICE+', once. No subscription, no account, no trial that runs out.\n\nProjects you already made never lock. Reaching the limit stops you starting another one; it never touches the ones you have.\n\nEntering your key sends it to Polar, who handle the payment, a single time, to register it. After that Notebuilt never contacts anything again — the unlock is not re-checked at launch, or ever. The key is stored in your settings, so your backup carries it to your next phone.\n\nIt is a real app that installs straight from the website — no app store in the middle. You go to notebuilt.ca, tap Install, and it is on your home screen like any other app: its own icon, opens full screen, works with no signal. The only difference is where it came from.\n\nIt is not in an app store today, and a store version is in the works. But here is the honest reason it started this way: direct means no middleman. No store taking a 15-30% cut that I’d have to pass on to you, no account required, no store tracking what you installed. You get it direct from the guy who built it, and updates land the moment I ship them instead of waiting on store review.\n\nSame app either way once it is installed. Your data is identical — everything stays on your phone regardless.\n\nAnd because the check runs on your own phone, in code you can read, it is honesty-based. I know that. Paying is a choice to keep this being built, not a lock I have you behind.',
+
+  'start':'The walkthrough is a one-minute tour of Notebuilt, using the sample job. Replay it from here any time.\n\nThe sample job is one of my own jobs, real photos and all, filled in the way I keep a job. It is there to look around in, or to show someone what the app does, and it does not count toward your free projects. Loading it downloads its four photos from the same website the app itself comes from; nothing of yours goes anywhere. Remove takes it away along with its photos, notes and to-dos. To-dos and notes you added to it yourself stay, unfiled. If you made it a protected project, it is deleted the way any protected project is: everything in it goes.\n\nThe checklist sits at the top of To Do until you have done the five things that make Notebuilt worth having. Hide it whenever you like, and bring it back from here.'
 };
+
+/* ============================================================
+   NB_TOUR — the first-run walkthrough, the getting-started checklist,
+   the sample job, and "what's new" pointers.
+
+   The engine is EGSTour, the shared block above this script; it draws and
+   it waits, and it stores nothing. Everything Notebuilt-specific is here,
+   and every word a person reads is in NB_TOUR_COPY — the walkthrough
+   script, in one place, in first person.
+
+   STORAGE — one key of its own, notebuilt.tour, for the same reason the
+   theme and beginner mode have theirs: it describes this PHONE, not the
+   data. Whether the person holding it has seen the walkthrough is not a
+   thing a backup restored onto a mate's tablet should decide, so it is not
+   in settings and not in the export.
+     { v:1, firstRun, startedAt, done, skipped, endedAt, seen:[ids], check }
+   firstRun — this phone began with the welcome card (a new user): the
+   checklist shows by default, and the old "New here: the i marks" notice
+   does not, because the walkthrough already said it.
+
+   STARTUP NEVER WRITES IT. nbTourOnShell() only reads. The key is written
+   by a tap — Show me around, Skip, the X, Got it, Hide, Replay — and by
+   nothing else. A welcome card left untouched writes nothing at all, and
+   simply comes back next time.
+
+   THE SAMPLE JOB is ordinary data — a real project, real to-dos, a real
+   note, four real photos — so every screen shows it exactly as it would
+   show the person's own. Each record carries sample:NB_SAMPLE_ID, which is
+   how it is found again (one copy, at most), removed as a set, and kept out
+   of the free-project count. Only ONE sample is ever exempt from the cap,
+   so a file edited to mark every project a sample buys one, not unlimited.
+   ============================================================ */
+const NB_TOUR_KEY='notebuilt.tour';
+const NB_SAMPLE_ID='nb-sample-1';
+
+/* THE SCRIPT. Every string the walkthrough, the checklist, "what's new",
+   the landing card and the Settings rows show. Plain text only — the
+   engine writes it with textContent, and the landing and Settings run it
+   through esc(), so a stray < can never become a tag. */
+const NB_TOUR_COPY={
+  next:'Next', skipStep:'Skip this step', showMe:'Show me', close:'End the walkthrough',
+  stepOf:'Step {n} of {m}', gotIt:'Got it',
+  steps:{
+    welcome:{ title:'Welcome to Notebuilt', lead:'The notebook app for real tradespeople.',
+      body:'Run three or four jobs at once and keep every one of them straight — its own photos, notes and to-dos, all in one place.\n\nI’ve set up a sample job so you can see how it works. It takes about a minute.',
+      go:'Show me around', skip:'Skip — I’ll look around myself',
+      loading:'Setting up the sample job…',
+      noPhotos:'The sample photos didn’t load — the rest of the job is there',
+      failed:'The sample job couldn’t be set up just now',
+      unreadable:'Your saved projects couldn’t be read, so I didn’t add the sample. Restore your latest backup first.' },
+    openSample:{ title:'This is a sample job',
+      body:'It’s one of my own jobs, filled in the way a real one would be. Tap it to look inside.' },
+    inside:{ title:'Everything for the job, in the job',
+      body:'Photos you take inside a project are saved right here, not mixed into your camera roll. Its notes and to-dos live in here too, and nothing spills over into your other jobs.' },
+    newProject:{ title:'Now start your own',
+      body:'Tap New project and give it a name. The job you’re on right now is perfect.' },
+    addTodo:{ title:'Add one thing that needs doing',
+      body:'Tap Add to-do and write something for this job — a part to pick up, a callback, a cut to make.' },
+    goTodo:{ title:'Now check To Do', body:'Tap To Do at the bottom of the screen.' },
+    oneList:{ title:'Every job, one list',
+      body:'Your to-do and the sample job’s, side by side, each one tagged with its job. Everything that needs doing on every site, without opening a single project.' },
+    vault:{ title:'Keep the private stuff private',
+      body:'Door codes, client details, photos nobody else should see? Open a project, tap Edit, and turn on Protect this project. Its notes, to-dos and photos are encrypted behind a passphrase only you know — not even I can open them.' },
+    done:{ title:'You’re set',
+      body:'The checklist on To Do walks you through the rest, and the little i marks explain any part of the app.\n\nThe sample job doesn’t count toward your '+UNLOCK.FREE_PROJECTS+' free projects. Delete it whenever you like — Settings brings it back.',
+      go:'Done' }
+  },
+  hero:{ title:'Welcome to Notebuilt', lead:'The notebook app for real tradespeople.',
+    body:'Start with a project — a house, a unit, a job site. Its photos, notes and to-dos stay together, and every to-do also lands on this list.',
+    create:'Create your first project', tour:'Show me around first' },
+  jobs:{ label:'Projects', create:'New project' },
+  checklist:{ title:'Getting started', count:'{d} of {n}', hide:'Hide', optional:'optional',
+    doneTitle:'You’re all set', doneBody:'That’s everything that makes Notebuilt worth having. Hide this whenever you like.',
+    hidden:'Checklist hidden — Settings brings it back',
+    items:[
+      { id:'project', label:'Start your first project' },
+      { id:'todo',    label:'Add a to-do to it' },
+      { id:'photo',   label:'Take a photo on the job' },
+      { id:'note',    label:'Write a note' },
+      { id:'backup',  label:'Back up to a file' },
+      { id:'vault',   label:'Protect a private project', optional:true }
+    ],
+    points:{
+      photo:{ title:'Take it from here', body:'Camera takes the picture inside Notebuilt, and it stays in this project.' },
+      note:{ title:'Add a note here', body:'Measurements, a supplier’s number, what the customer said on Tuesday.' },
+      backup:{ title:'Tap Export', body:'One file with everything in it. Keep it somewhere other than this phone.' }
+    } },
+  whatsNew:{ counter:'{n} of {m}', eyebrow:'New', next:'Next', done:'Got it' },
+  settings:{ label:'Getting started',
+    tour:'Walkthrough', tourSub:'A one-minute tour, using the sample job.', replay:'Replay',
+    sample:'Sample job', sampleSub:'A filled-in job to look around in, or to show someone. It doesn’t count toward your free projects.',
+    sampleHere:'Loaded. It doesn’t count toward your free projects.', load:'Load', remove:'Remove',
+    check:'Checklist', checkSub:'Five first steps, shown on To Do until they’re done.', show:'Show', hide:'Hide',
+    removeAsk:'Remove the sample job and everything in it?\n\nTo-dos and notes you added to it yourself stay, unfiled. Its photos go with it.',
+    removed:'Sample job removed', loading:'Loading the sample job…', loaded:'Sample job loaded',
+    already:'The sample job is already here' },
+  /* One of Edwin's own jobs. The photos are files in sample/, fetched from
+     the app's own site only when someone asks for the sample; 0-based
+     `cover` is the kitchen. To-dos are listed top to bottom as To Do shows
+     them within each status, newest first. */
+  sample:{ name:'Sample · Great Room & Kitchen', jobType:'trim',
+    siteNotes:'Scaffold casters stay on pads — new floor.',
+    photos:['sample/nb-sample-1.jpg','sample/nb-sample-2.jpg','sample/nb-sample-3.jpg','sample/nb-sample-4.jpg'],
+    cover:3,
+    todos:[
+      { text:'Tall wall: book drywall (insulation and poly done)', status:'todo' },
+      { text:'Set the jamb in the second opening', status:'todo' },
+      { text:'Case all door openings', status:'todo' },
+      { text:'Fireplace surround: confirm finish with client', status:'doing' },
+      { text:'Flooring install', status:'done' }
+    ],
+    note:{ title:'Fireplace surround', body:'Client still choosing tile or stone.' } }
+};
+
+/* "What's new" — pointed at once, after an update, on phones that already
+   had Notebuilt. A fresh phone marks every entry seen when it starts the
+   walkthrough, so a new user is never told about a change they did not
+   live through. New entries go at the END, with an id never used before.
+   `when` says whether an entry's target can exist on this phone right now;
+   one that cannot is left unseen for a later open, and never holds up the
+   rest (the Projects row is not drawn while the empty-app card is). */
+const NB_WHATS_NEW=[
+  { id:'2026-10-projects-on-todo', target:'#app [data-tour="projects"]', when:()=>!nbHeroShown(),
+    title:'Projects are on To Do now',
+    body:'Your active jobs sit at the top of the list. Tap one to jump in, or tap New project to start one from right here.' },
+  { id:'2026-10-getting-started', target:'#nav [data-nav="settings"]',
+    title:'New in Settings: Getting started',
+    body:'Replay the walkthrough, or load a sample job — handy for showing someone what Notebuilt does.' }
+];
+
+/* ---------- state: read anywhere, written only by a tap ---------- */
+/* EGS-STD:schema, on this key too: v is the shape of the record. One above
+   NB_TOUR_V came from a newer Notebuilt — never written over, and while it
+   is there this build points at nothing and starts nothing on its own. */
+const NB_TOUR_V=1;
+function nbTourFromFuture(){ const s=nbTourState(); return !!(s && typeof s.v==='number' && s.v>NB_TOUR_V); }
+function nbTourState(){
+  try{ const v=JSON.parse(localStorage.getItem(NB_TOUR_KEY)||'null'); return (v && typeof v==='object' && !Array.isArray(v)) ? v : null; }
+  catch(e){ return null; }
+}
+function nbTourWrite(patch){
+  const cur=nbTourState();
+  if(cur && typeof cur.v==='number' && cur.v>NB_TOUR_V) return cur;
+  const next=Object.assign({}, cur||{}, patch, {v:NB_TOUR_V});
+  try{ localStorage.setItem(NB_TOUR_KEY, JSON.stringify(next)); }catch(e){}
+  return next;
+}
+function nbTourFirstRunHere(){ const s=nbTourState(); return !!(s && s.firstRun); }
+function nbWhatsNewIds(){ return NB_WHATS_NEW.map(x=>x.id); }
+/* The first tap of a walkthrough. `auto` is true only for the welcome card a
+   fresh phone opened on — that is what makes this phone a new user's. */
+function nbTourBegin(auto){
+  const s=nbTourState();
+  const seen=Array.from(new Set([].concat((s&&Array.isArray(s.seen))?s.seen:[], nbWhatsNewIds())));
+  nbTourWrite({ firstRun: s ? !!s.firstRun : !!auto, seen, startedAt:(s&&s.startedAt)||now() });
+}
+
+/* ---------- what is on disk ----------
+   "Nothing here yet" is decided by the raw values, not by what parsed. load()
+   answers [] for a value it cannot read, and a phone whose projects cannot be
+   read is the opposite of new: the welcome card's first tap writes, and a
+   write over an unreadable key — and over its _bak twin, which the
+   durability guard keeps in step — is how unreadable turns into deleted. */
+const NB_TOUR_STORES=['notebuilt.houses','notebuilt.tasks','notebuilt.notes'];
+function nbRawBlank(k){
+  let v=null; try{ v=localStorage.getItem(k); }catch(e){ return false; }
+  return v==null || v==='' || v==='[]';
+}
+function nbStoresUnreadable(){
+  return NB_TOUR_STORES.some(k=>{
+    let v=null; try{ v=localStorage.getItem(k); }catch(e){ return true; }
+    if(v==null || v==='') return false;
+    try{ return !Array.isArray(JSON.parse(v)); }catch(e){ return true; }
+  });
+}
+function nbFreshPhone(){
+  return !houses.length && !tasks.length && !notes.length && !crewRecs.length
+    && NB_TOUR_STORES.every(k=>nbRawBlank(k) && nbRawBlank(k+'_bak'));
+}
+/* Redrawing under someone is only safe on a list, with nothing open and
+   nothing being typed into (EGS-DECISIONS 2026-08-12, node identity). */
+function nbSafeToRedraw(){
+  const a=document.activeElement;
+  return ['todo','houses','settings'].indexOf(view.name)>=0 && !$mr.firstChild
+    && !(a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+
+/* ---------- the sample job ---------- */
+function nbIsSample(r){ return !!(r && r.sample===NB_SAMPLE_ID); }
+function nbSampleProject(){ return houses.find(nbIsSample)||null; }
+/* The free cap counts real projects. One sample, at most, is not one. */
+function nbCountedProjects(){ return houses.length - (houses.some(nbIsSample)?1:0); }
+function nbOwnProjects(){ return houses.filter(h=>!nbIsSample(h)); }
+
+/* Loads it once. A second call while the first is running gets the same
+   promise, and a call when it is already here gets that one — there is
+   never a second copy. Order is the durability order handlePhoto() uses:
+   records first, then each photo persisted the moment it lands, so a death
+   part-way strands at most one photo and recoverOrphanPhotos() re-attaches
+   even that. The photos come from this app's own site (sample/), the same
+   place index.html comes from, and only now — nothing is sent, nothing of
+   the person's goes anywhere, and the privacy page says so. */
+let _nbSampleLoading=null, _nbSampleLoadingId=null;
+function nbSampleLoad(){
+  const have=nbSampleProject();
+  if(have) return Promise.resolve({house:have, photos:(have.photos||[]).length, existed:true});
+  if(_nbSampleLoading && houseById(_nbSampleLoadingId)) return _nbSampleLoading;
+  /* Never write a sample over projects that could not be read. */
+  if(nbStoresUnreadable()) return Promise.reject(new Error('unreadable'));
+  const S=NB_TOUR_COPY.sample, base=now()-60*60*1000;
+  const h={ id:uid(), name:S.name, category:'construction', address:'', status:'active', jobType:S.jobType,
+            specs:[], photos:[], cover:null, notes:S.siteNotes, createdAt:base, updatedAt:base, sample:NB_SAMPLE_ID };
+  _nbSampleLoadingId=h.id;
+  _nbSampleLoading=(async()=>{
+    houses.push(h); persist.houses();
+    S.todos.forEach((t,k)=>{
+      const at=base-k*60000;
+      tasks.push({ id:uid(), text:t.text, status:t.status, houseId:h.id, createdAt:at, updatedAt:at,
+                   doneAt:t.status==='done'?at:null, dueDate:null, sample:NB_SAMPLE_ID });
+    });
+    persist.tasks();
+    notes.push({ id:uid(), title:S.note.title, body:S.note.body, houseId:h.id, important:false,
+                 createdAt:base, updatedAt:base, sample:NB_SAMPLE_ID });
+    persist.notes();
+    let got=0;
+    for(let k=0;k<S.photos.length;k++){
+      try{
+        const res=await fetch(S.photos[k]);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const blob=await res.blob();
+        if(!/^image\//.test(blob.type||'')) throw new Error('not an image');
+        const pid=uid();
+        await photoPutFor(h.id,{ id:pid, blob, houseId:h.id, createdAt:base+k });
+        if(!houseById(h.id)){                       /* removed while it was loading: take this one back too */
+          try{ await photoDel(pid); }catch(e){}
+          break;
+        }
+        h.photos.push(pid);
+        if(!h.cover || k===S.cover) h.cover=pid;
+        persist.houses();
+        got++;
+      }catch(e){ console.warn('Notebuilt: a sample photo did not load', e); }
+    }
+    return {house:h, photos:got, existed:false};
+  })();
+  const p=_nbSampleLoading;
+  p.then(()=>{ if(_nbSampleLoading===p) _nbSampleLoading=null; }, ()=>{ if(_nbSampleLoading===p) _nbSampleLoading=null; });
+  return p;
+}
+
+/* It opens the sample when it lands — but only if the person is still where
+   they tapped Load, with nothing open. Anywhere else, a toast says it is
+   there and the screen they are on is left alone. */
+async function nbSampleLoadTap(){
+  const C=NB_TOUR_COPY.settings, W=NB_TOUR_COPY.steps.welcome;
+  const have=nbSampleProject();
+  if(have){ toast(C.already); go('house',have.id); return; }
+  const from={ name:view.name, param:view.param };
+  toast(C.loading);
+  let r=null, why=null;
+  try{ r=await nbSampleLoad(); }catch(e){ why=e; }
+  if(!r){ toast(why && why.message==='unreadable' ? W.unreadable : W.failed); if(nbSafeToRedraw()) render(); return; }
+  toast(r.photos ? C.loaded : W.noPhotos);
+  if(view.name===from.name && view.param===from.param && !$mr.firstChild) go('house', r.house.id);
+  else if(nbSafeToRedraw()) render();
+}
+
+/* Every delete asks first (EGS standard). The sample's own to-dos and note go
+   with it; anything the person added to it is unfiled, the way deleting any
+   project leaves its to-dos behind. Records first, photos after: a death in
+   between can only leave unreferenced bytes, never a project pointing at
+   photos that are gone. */
+async function nbSampleRemove(id){
+  const h=houseById(id); if(!h || !nbIsSample(h)) return;
+  /* Protected, its notes and to-dos are ciphertext under the vault key, and
+     unfiling them would strand them where nothing can open them again. So it
+     goes the way every protected project goes: the vault's own delete, which
+     asks twice and takes everything in it. */
+  if(h.protected){ vaultDeleteLocked(h.id); return; }
+  if(!confirm(NB_TOUR_COPY.settings.removeAsk)) return;
+  const pids=(h.photos||[]).slice();
+  tasks=tasks.filter(t=>!(t.houseId===h.id && nbIsSample(t)));
+  notes=notes.filter(n=>!(n.houseId===h.id && nbIsSample(n)));
+  tasks.forEach(t=>{ if(t.houseId===h.id) t.houseId=null; });
+  notes.forEach(n=>{ if(n.houseId===h.id) n.houseId=null; });
+  houses=houses.filter(x=>x.id!==h.id);
+  if(settings.vault && settings.vault.migration && settings.vault.migration.houseId===h.id){
+    settings.vault.migration=null; persist.settings();
+  }
+  persist.houses(); persist.tasks(); persist.notes();
+  if((view.name==='house'||view.name==='housenotes') && view.param===h.id) go('todo'); else render();
+  toast(NB_TOUR_COPY.settings.removed);
+  for(const pid of pids){ try{ await photoDel(pid); }catch(e){} }
+  /* A photo that landed in storage before its id reached the list. */
+  try{ for(const rec of await photoAll()){ if(rec.houseId===h.id) await photoDel(rec.id); } }catch(e){}
+}
+
+/* ---------- the landing: checklist, then projects (or the welcome card) ---------- */
+/* Not while the walkthrough is up: its own welcome card says the same thing. */
+function nbHeroShown(){ return !houses.length && !tasks.length && !EGSTour.active(); }
+function nbStartHtml(){
+  if(nbHeroShown()) return nbHeroHtml();
+  return (nbChecklistShown() ? '<div class="wrap">'+EGSTour.checklistHtml(nbChecklistModel(), esc)+'</div>' : '')+nbJobsHtml();
+}
+function nbHeroHtml(){
+  const C=NB_TOUR_COPY.hero;
+  return `<div class="wrap"><div class="card nb-hero">
+    <div class="nb-hero-mark">${MARK}</div>
+    <div class="nb-hero-title">${esc(C.title)}</div>
+    <div class="nb-hero-lead">${esc(C.lead)}</div>
+    <div class="nb-hero-body">${esc(C.body)}</div>
+    <button type="button" class="btn primary block" data-new-project>${I.plus} ${esc(C.create)}</button>
+    <button type="button" class="btn block" data-tour-start="landing" style="margin-top:10px">${esc(C.tour)}</button>
+  </div></div>`;
+}
+/* Active jobs, most recently touched first, as one row that scrolls sideways
+   inside itself — the page never does. A protected project shows its name
+   and a lock and nothing else, exactly as the Projects list does: how much is
+   in there is itself information. */
+function nbJobsHtml(){
+  const C=NB_TOUR_COPY.jobs;
+  const live=houses.filter(h=>h.status!=='done').sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  const chip=h=>{
+    if(h.protected) return `<button type="button" class="nb-job" data-house="${esc(h.id)}">${I.lock}<span class="nb-job-name">${esc(h.name)}</span></button>`;
+    const open=tasks.filter(t=>t.houseId===h.id && t.status!=='done').length;
+    return `<button type="button" class="nb-job"${nbIsSample(h)?' data-tour="sample"':''} data-house="${esc(h.id)}"><span class="nb-job-name">${esc(h.name)}</span>${open?`<span class="nb-job-n">${open}</span>`:''}</button>`;
+  };
+  return `<div class="wrap" data-tour="projects"><div class="sec-head"><span class="label">${esc(C.label)}</span>${nbHelpMark('projects')}<span class="rule"></span><button type="button" class="btn sm nb-new" data-new-project>${I.plus} ${esc(C.create)}</button></div>
+    ${live.length?`<div class="nb-jobs">${live.map(chip).join('')}</div>`:''}</div>`;
+}
+
+/* ---------- the checklist ---------- */
+function nbChecklistShown(){
+  if(EGSTour.active()) return false;
+  const s=nbTourState(); if(!s) return false;
+  if(s.check==='off') return false;
+  if(s.check==='on') return true;
+  return !!s.firstRun;
+}
+/* Ticked by what is actually in the app, never by a flag that could drift
+   from it. The sample job counts for nothing here — it is not their work. */
+function nbChecklistModel(){
+  const C=NB_TOUR_COPY.checklist;
+  const own=nbOwnProjects(), ownIds=new Set(own.map(h=>h.id));
+  const done={
+    project: own.length>0,
+    todo:    tasks.some(t=>t.houseId && ownIds.has(t.houseId)),
+    photo:   own.some(h=>(h.photos||[]).length>0),
+    note:    notes.some(n=>!nbIsSample(n)) || own.some(h=>typeof h.notes==='string' ? h.notes.trim().length>0 : !!h.notes),
+    backup:  !!settings.lastBackupAt,
+    vault:   houses.some(h=>h.protected)
+  };
+  return { title:C.title, doneTitle:C.doneTitle, doneBody:C.doneBody, hideLabel:C.hide,
+           countLabel:C.count, optionalLabel:C.optional,
+           items:C.items.map(x=>({ id:x.id, label:x.label, optional:!!x.optional, done:!!done[x.id] })) };
+}
+/* Each item takes them to where it gets done. The pointers are the engine's
+   non-modal kind: the page stays usable, and tapping the thing clears it. */
+function nbPoint(sel, c){
+  const at={ name:view.name, param:view.param };     /* go() has already moved view */
+  EGSTour.point('#app '+sel, { title:c.title, body:c.body, button:NB_TOUR_COPY.gotIt,
+    zIndex:54, isBusy:nbTourBusy, dismissOnTargetTap:true,
+    until:()=>!(view.name===at.name && view.param===at.param) });   /* gone the moment they leave */
+}
+function nbChecklistGo(id){
+  const P=NB_TOUR_COPY.checklist.points;
+  const own=nbOwnProjects().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  const h=own.find(x=>!x.protected)||own[0]||null;
+  if(id==='vault'){ nbHelpSheet('vault'); return; }
+  if(id==='backup'){ go('support'); nbPoint('[data-export]', P.backup); return; }
+  if(id==='project' || !h){ openHouseSheet(); return; }
+  go('house', h.id);
+  if(id==='todo'){ openTaskSheet(h.id); return; }
+  if(id==='photo'){ nbPoint('[data-open-camera]', P.photo); return; }
+  if(id==='note'){ nbPoint('[data-add-note-house]', P.note); return; }
+}
+
+/* ---------- Settings: Getting started ---------- */
+function nbStartSettingsHtml(){
+  const C=NB_TOUR_COPY.settings, here=!!nbSampleProject(), on=nbChecklistShown();
+  return `<div class="sec-head"><span class="label">${esc(C.label)}</span>${nbHelpMark('start')}<span class="rule"></span></div>
+    <div class="card row"><div class="grow"><div>${esc(C.tour)}</div><div class="muted" style="font-size:13px">${esc(C.tourSub)}</div></div>
+      <button class="btn sm" data-tour-start>${esc(C.replay)}</button></div>
+    <div class="card row"><div class="grow"><div>${esc(C.sample)}</div><div class="muted" style="font-size:13px">${esc(here?C.sampleHere:C.sampleSub)}</div></div>
+      ${here?`<button class="btn sm danger" data-sample-remove>${esc(C.remove)}</button>`:`<button class="btn sm" data-sample-load>${esc(C.load)}</button>`}</div>
+    <div class="card row"><div class="grow"><div>${esc(C.check)}</div><div class="muted" style="font-size:13px">${esc(C.checkSub)}</div></div>
+      <div class="unit-toggle"><button class="${on?'on':''}" data-check-set="on">${esc(C.show)}</button><button class="${on?'':'on'}" data-check-set="off">${esc(C.hide)}</button></div></div>`;
+}
+
+/* ---------- the walkthrough ---------- */
+/* Anything drawn over the page that the walkthrough must stand clear of. */
+function nbTourBusy(){
+  return !!($mr.firstChild || !$lock.classList.contains('hidden') || !$viewer.classList.contains('hidden')
+    || !$annotate.classList.contains('hidden') || !$vault.classList.contains('hidden') || cam.open
+    || document.querySelector('.help-scrim') || document.getElementById('vault-busy'));
+}
+function nbTourSteps(auto){
+  const C=NB_TOUR_COPY, S=C.steps;
+  /* mine — the project they make on the "start your own" step. tP and tT —
+     when each action step first opened, so only something made AFTER the
+     step was asked for counts as doing it. Set once each: Show me runs
+     prepare() again, and must not move the line. */
+  let mine=null, tP=0, tT=0;
+  const sample=()=>nbSampleProject();
+  const newestOwn=()=>nbOwnProjects().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0]||null;
+  const onHouse=id=>view.name==='house' && view.param===id;
+  return [
+    { id:'welcome', uncounted:true, title:S.welcome.title, lead:S.welcome.lead, body:S.welcome.body,
+      primary:S.welcome.go,
+      onPrimary:ctl=>{
+        nbTourBegin(auto);
+        ctl.wait(S.welcome.loading);
+        nbSampleLoad().then(r=>{
+          if(!ctl.alive()){ if(nbSafeToRedraw()) render(); return; }   /* closed while it loaded */
+          ctl.wait(null);
+          if(!r.existed && !r.photos) toast(S.welcome.noPhotos);
+          render(); ctl.next();
+        }, e=>{
+          if(!ctl.alive()) return;
+          ctl.wait(null);
+          toast(e && e.message==='unreadable' ? S.welcome.unreadable : S.welcome.failed);
+          ctl.end('stopped');
+        });
+      },
+      secondary:{ label:S.welcome.skip, onTap:ctl=>ctl.end('skipped') } },
+    { id:'open-sample', title:S.openSample.title, body:S.openSample.body,
+      target:'#app [data-tour="sample"]',
+      prepare:()=>{ if(view.name!=='todo') go('todo'); },
+      waitFor:()=>{ const sp=sample(); return !!(sp && onHouse(sp.id)); },
+      skipIf:()=>!sample() },
+    { id:'inside', title:S.inside.title, body:S.inside.body, primary:C.next,
+      target:'#app .photo-grid', pad:8,
+      prepare:()=>{ const sp=sample(); if(sp && !onHouse(sp.id)) go('house', sp.id); },
+      skipIf:()=>!sample() },
+    { id:'new-project', title:S.newProject.title, body:S.newProject.body,
+      target:'#app [data-new-project]',
+      skipIf:()=>!unlockCanCreateProject(),
+      prepare:()=>{ if(!tP) tP=now(); if(view.name!=='todo') go('todo'); },
+      waitFor:()=>{ const h=nbOwnProjects().find(x=>(x.createdAt||0)>=tP-1000); if(h){ mine=h.id; return true; } return false; } },
+    { id:'add-todo', title:S.addTodo.title, body:S.addTodo.body,
+      target:'#app [data-add-house-task]',
+      prepare:()=>{ if(!tT) tT=now(); if(mine && !onHouse(mine)) go('house', mine); },
+      waitFor:()=>tasks.some(t=>t.houseId===mine && (t.createdAt||0)>=tT-1000),
+      skipIf:()=>{ if(!mine){ const h=newestOwn(); mine=h?h.id:null; } const h=mine&&houseById(mine); return !h || (h.protected && !vaultUnlocked()); } },
+    { id:'go-todo', title:S.goTodo.title, body:S.goTodo.body,
+      target:'#nav [data-nav="todo"]',
+      waitFor:()=>view.name==='todo',
+      skipIf:()=>view.name==='todo' },
+    { id:'one-list', title:S.oneList.title, body:S.oneList.body, primary:C.next,
+      target:'#app [data-tour="todo-list"]', maxHole:0.45,
+      prepare:()=>{ if(view.name!=='todo') go('todo'); },
+      skipIf:()=>!tasks.some(t=>!isProtected(t.houseId)) },
+    { id:'vault', title:S.vault.title, body:S.vault.body, primary:C.next },
+    { id:'done', title:S.done.title, body:S.done.body, primary:S.done.go }
+  ];
+}
+/* auto: the welcome card a fresh phone opened on, before anyone tapped. */
+function nbTourRun(auto){
+  if(EGSTour.active()) return;
+  const C=NB_TOUR_COPY;
+  EGSTour.run(nbTourSteps(auto), {
+    zIndex:55, isBusy:nbTourBusy,
+    labels:{ next:C.next, skipStep:C.skipStep, showMe:C.showMe, close:C.close, stepOf:C.stepOf },
+    onEnd:reason=>{
+      /* Only a person ends a walkthrough as done or skipped, so these are
+         taps too. 'replaced' and 'stopped' come from code and write nothing. */
+      if(reason==='done'){ nbTourBegin(auto); nbTourWrite({ done:true, endedAt:now() }); }
+      else if(reason==='skipped'){ nbTourBegin(auto); nbTourWrite({ skipped:true, endedAt:now() }); }
+      try{ render(); }catch(e){}
+    }
+  });
+  /* Redraw under it: the landing's welcome card stands down while the
+     walkthrough's own says the same thing. */
+  try{ render(); }catch(e){}
+}
+/* From a tap: the empty-app card's "Show me around first" (fromLanding), or
+   Settings → Replay. The tap is the write. From the empty-app card on a phone
+   with nothing in it, this IS a new user's first walkthrough — one who came in
+   through a crew or deep link and so never saw the welcome card. */
+function nbTourStart(fromLanding){
+  if(EGSTour.active()) return;
+  nbTourBegin(!!fromLanding && !houses.length && !tasks.length && !notes.length);
+  nbTourRun(false);
+}
+/* Called wherever the shell is revealed — past the PIN, if there is one.
+   READS ONLY. A crew link, a deep link, or a sheet already up means this is
+   not the moment; the next ordinary open is. */
+async function nbTourOnShell(){
+  if(view.name!=='todo') return;
+  try{ if(crewReady) await crewReady; }catch(e){}
+  await new Promise(r=>setTimeout(r,450));
+  if(!appUnlocked() || view.name!=='todo' || EGSTour.active() || $mr.firstChild || nbTourFromFuture()) return;
+  const s=nbTourState();
+  if(!s && nbFreshPhone()){ nbTourRun(true); return; }
+  const fresh=EGSTour.unseen(NB_WHATS_NEW, s && s.seen).filter(x=>!x.when || x.when());
+  if(!fresh.length) return;
+  const W=NB_TOUR_COPY.whatsNew;
+  EGSTour.pointSeries(fresh, { zIndex:54, isBusy:nbTourBusy, eyebrow:W.eyebrow, counter:W.counter, next:W.next, done:W.done,
+    onSeen:id=>{ const cur=nbTourState(); const seen=(cur && Array.isArray(cur.seen)) ? cur.seen.slice() : [];
+                 if(seen.indexOf(id)<0) seen.push(id); nbTourWrite({ seen }); } });
+}
 
 /* ---------- IndexedDB for photos (blobs, never uploaded) ---------- */
 let _db=null;
@@ -3865,10 +5022,13 @@ function renderToday(){
   const head=`<div class="topbar"><div class="grow"><span class="eyebrow">${esc(d.toLocaleDateString(undefined,{weekday:'long'}))} · ${esc(d.toLocaleDateString(undefined,{month:'long',day:'numeric'}))}</span><h1>To Do ${nbHelpMark('todos')}</h1></div>
     <button class="icon-btn" data-share-app aria-label="Share ${esc(APP_NAME)}" title="Share ${esc(APP_NAME)}">${EGS_SHARE_GLYPH}</button>
     <button class="icon-btn" data-go="search" aria-label="Search">${I.search}</button></div>`;
-  if(!list.length) return head+nbGuideNoticeHtml()+crewCardHtml()+`<div class="empty">${I.today}<div class="t">Nothing on the list yet</div><div>Tap + to add what you're working on. Mark it Doing when you start, Done when it's finished.</div></div>`;
+  /* NB_TOUR — under the notices: the checklist and the Projects row, or, with
+     nothing in the app at all, the welcome card in place of the empty list. */
+  const start=nbStartHtml();
+  if(!list.length) return head+nbGuideNoticeHtml()+crewCardHtml()+start+(nbHeroShown()?'':`<div class="empty">${I.today}<div class="t">Nothing on the list yet</div><div>Tap + to add what you're working on. Mark it Doing when you start, Done when it's finished.</div></div>`);
   const sec=(label,arr)=> arr.length?`<div class="sec-head"><span class="label">${label}</span><span class="rule"></span><span class="count">${arr.length}</span></div>${arr.map(taskRow).join('')}`:'';
   const doneSec = done.length ? `<div class="sec-head"><span class="label">Done</span><span class="rule"></span><button class="btn sm" data-clear-done style="padding:2px 10px">Clear done</button></div>${done.map(taskRow).join('')}` : '';
-  return head+nbGuideNoticeHtml()+crewCardHtml()+`<div class="wrap">${sec('In progress',doing)}${sec('To do',todo)}${doneSec}</div>`;
+  return head+nbGuideNoticeHtml()+crewCardHtml()+start+`<div class="wrap" data-tour="todo-list">${sec('In progress',doing)}${sec('To do',todo)}${doneSec}</div>`;
 }
 function taskRow(t){
   const h=t.houseId?houseById(t.houseId):null;
@@ -4476,6 +5636,8 @@ function renderSettings(){
       : 'Expert \u2014 the i marks are hidden. Nothing else changes.'}</div></div>
       <div class="unit-toggle"><button class="${nbGuideOn()?'on':''}" data-guide-set="on">Beginner</button><button class="${nbGuideOn()?'':'on'}" data-guide-set="off">Expert</button></div></div>
 
+    ${nbStartSettingsHtml()}
+
     <div class="sec-head"><span class="label">Units</span><span class="rule"></span></div>
     <div class="card row"><div class="grow"><div>Measurements</div><div class="muted" style="font-size:13px">Default for the calculator and measurement fields. You can switch per screen too.</div></div>
       <div class="unit-toggle"><button class="${(settings.units||'imperial')==='imperial'?'on':''}" data-units-set="imperial">ft/in</button><button class="${settings.units==='metric'?'on':''}" data-units-set="metric">metric</button></div></div>
@@ -4485,12 +5647,12 @@ function renderSettings(){
       <div class="unit-toggle">${Object.keys(PHOTO_PRESETS).map(k=>`<button class="${k===photoPresetKey()?'on':''}" data-photo-preset="${k}">${esc(PHOTO_PRESETS[k].label)}</button>`).join('')}</div></div>
 
     <div class="sec-head"><span class="label">Unlock</span>${nbHelpMark('unlock')}<span class="rule"></span></div>
-    <div class="card row" data-help="unlock"><div class="grow"><div>${unlockIsOn()?'Unlocked \u2713':(houses.length>UNLOCK.FREE_PROJECTS?'Free':'Free \u2014 '+UNLOCK.FREE_PROJECTS+' projects')}</div>
+    <div class="card row" data-help="unlock"><div class="grow"><div>${unlockIsOn()?'Unlocked \u2713':(nbCountedProjects()>UNLOCK.FREE_PROJECTS?'Free':'Free \u2014 '+UNLOCK.FREE_PROJECTS+' projects')}</div>
       <div class="muted" style="font-size:13px">${unlockIsOn()
         ? 'Unlimited projects. Activated '+esc(unlockActivatedOn())+', and never re-checked since.'
-        : houses.length>UNLOCK.FREE_PROJECTS
-          ? houses.length+' projects, all yours to keep. '+esc(UNLOCK.PRICE)+' once to add more.'
-          : houses.length+' of '+UNLOCK.FREE_PROJECTS+' used. '+esc(UNLOCK.PRICE)+' once, for unlimited projects.'}</div></div>
+        : nbCountedProjects()>UNLOCK.FREE_PROJECTS
+          ? nbCountedProjects()+' projects, all yours to keep. '+esc(UNLOCK.PRICE)+' once to add more.'
+          : nbCountedProjects()+' of '+UNLOCK.FREE_PROJECTS+' used. '+esc(UNLOCK.PRICE)+' once, for unlimited projects.'}</div></div>
       ${unlockIsOn()?'':'<button class="btn sm" data-unlock-open>Unlock</button>'}</div>
 
     <div class="sec-head"><span class="label">About</span><span class="rule"></span></div>
@@ -4661,7 +5823,8 @@ function openHouseSheet(edit=null){
     /* A protected project's notes and to-dos are unreadable ciphertext — unlinking
        them would strand it. Route to the escape hatch, which deletes them. */
     if(edit.protected){ closeSheet(); vaultDeleteLocked(edit.id); return; }
-    if(!confirm(`Delete "${edit.name}" and its specs? Photos and to-dos for it stay but unlink.`)) return;
+    if(nbIsSample(edit)){ closeSheet(); nbSampleRemove(edit.id); return; }   /* NB_TOUR — this sample, as a set, asked first */
+    if(!confirm(`Delete "${edit.name}" with its specs and photos?\n\nIts to-dos and notes stay, unfiled.`)) return;
     (edit.photos||[]).forEach(pid=>photoDel(pid).catch(()=>{}));
     houses=houses.filter(x=>x.id!==edit.id);
     tasks.forEach(t=>{ if(t.houseId===edit.id) t.houseId=null; });
@@ -4851,6 +6014,16 @@ function bind(){
      deliberately not involved. */
   $app.querySelectorAll('[data-guide-set]').forEach(b=>b.onclick=()=>{ nbGuideSet(b.dataset.guideSet==='on'); render(); toast(nbGuideOn()?'Beginner mode on':'Expert mode on'); });
   const gnX=$app.querySelector('[data-guide-notice-x]'); if(gnX) gnX.onclick=()=>nbGuideNoticeDismiss(false);
+  /* NB_TOUR — New project on the landing, the walkthrough, the checklist and
+     the Getting started rows. The taps on a screen that write notebuilt.tour
+     are these; the walkthrough's own buttons are the rest. */
+  $app.querySelectorAll('[data-new-project]').forEach(b=>b.onclick=()=>openHouseSheet());
+  $app.querySelectorAll('[data-tour-start]').forEach(b=>b.onclick=()=>nbTourStart(b.dataset.tourStart==='landing'));
+  $app.querySelectorAll('[data-egs-check]').forEach(b=>b.onclick=()=>nbChecklistGo(b.dataset.egsCheck));
+  $app.querySelectorAll('[data-egs-check-hide]').forEach(b=>b.onclick=()=>{ nbTourWrite({check:'off'}); render(); toast(NB_TOUR_COPY.checklist.hidden); });
+  $app.querySelectorAll('[data-check-set]').forEach(b=>b.onclick=()=>{ nbTourWrite({check:b.dataset.checkSet==='on'?'on':'off'}); render(); });
+  const sLoad=$app.querySelector('[data-sample-load]'); if(sLoad) sLoad.onclick=()=>nbSampleLoadTap();
+  const sDel=$app.querySelector('[data-sample-remove]'); if(sDel) sDel.onclick=()=>{ const sp=nbSampleProject(); if(sp) nbSampleRemove(sp.id); };
   nbHelpBind($app);
   $app.querySelectorAll('[data-units-set]').forEach(b=>b.onclick=()=>{ settings.units=b.dataset.unitsSet; persist.settings(); render(); });
   $app.querySelectorAll('[data-photo-preset]').forEach(b=>b.onclick=()=>{ settings.photoPreset=b.dataset.photoPreset; persist.settings(); render(); toast('Capture size: '+PHOTO_PRESETS[photoPresetKey()].label); });
@@ -4924,6 +6097,7 @@ function renderPrivacy(){
     <div class="sec-head"><span class="label">When this app touches the internet</span><span class="rule"></span></div>
     <div class="card muted" style="font-size:13.5px;line-height:1.6">
       Only to load the app itself from GitHub Pages — no data leaves your phone to do that.<br><br>
+      If you load the sample job, its four photos come down from the same place, the same way. They are part of the app, and nothing of yours goes up.<br><br>
       If you use <b style="color:var(--paper)">Share project</b>, that hands a file to your phone's own share sheet — you choose where it goes. I'm not part of that transfer.<br><br>
       If you unlock the app, tapping <b style="color:var(--paper)">Activate</b> sends your key to Polar, who handle the payment, to register it. That is the only moment Notebuilt ever reaches out. Nothing of yours goes with it — no projects, no photos, no identifier for you — and once it succeeds the unlock is never re-checked, at launch or ever.<br><br>
       If that first request is refused, Notebuilt asks the server one follow-up question — is this key valid? — and nothing more. Still nothing before you enter a key, still nothing ever again after.<br><br>
@@ -6831,7 +8005,7 @@ async function importData(e){
        exists here only ever describes the phone. Asking `d` describes the
        backup, which is the thing being judged. A file that brought its own
        standing has already merged it and is left alone. */
-    if(!(d.settings && typeof d.settings.priorProjects==='number')) settings.priorProjects=houses.length;
+    if(!(d.settings && typeof d.settings.priorProjects==='number')) settings.priorProjects=nbCountedProjects();
     persist.settings();
 
     /* photos */
@@ -7070,7 +8244,7 @@ const $lock=document.getElementById('lock');
 function showShell(show){ document.getElementById('app').classList.toggle('hidden',!show); $nav.classList.toggle('hidden',!show); }
 
 function lockGate(){
-  if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); crewOnShell(); return; }
+  if(!settings.pinHash){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); crewOnShell(); nbTourOnShell(); return; }
   showShell(false); $fab.classList.add('hidden');
   let entry='';
   /* PIN_STEADY — built ONCE, on the way in.
@@ -7110,7 +8284,7 @@ function lockGate(){
       busy=true;
       const ok=(await sha(entry+settings.pinSalt))===settings.pinHash;
       busy=false;
-      if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); maybeOfferRecoveryCode(); crewOnShell(); }
+      if(ok){ $lock.classList.add('hidden'); showShell(true); render(); maybeShowInstallPrompt(); maybeShowDataSafetyNudge(); maybeOfferRecoveryCode(); crewOnShell(); nbTourOnShell(); }
       else{ entry=''; paint('Wrong PIN'); }
     }
   });
@@ -7688,7 +8862,7 @@ function maybeShowInstallPrompt(){
 async function maybeShowDataSafetyNudge(){
   if(!appUnlocked()) return;
   if(document.getElementById('install-banner')||document.getElementById('backup-banner')) return;
-  if(!houses.length) return;
+  if(!nbCountedProjects()) return;     /* NB_TOUR — the sample job alone is nothing to back up */
   const snoozeUntil=parseInt(localStorage.getItem('notebuilt.backupNudgeSnoozeUntil')||'0',10);
   if(Date.now()<snoozeUntil) return;
 
